@@ -26,6 +26,7 @@ import {
   makeScratchFile,
   type FileItem,
 } from "@/lib/codeforge-workspace";
+import { analyzeSource, getWorkingTreeState } from "@/lib/codeforge-analysis";
 
 type Mode = "editor" | "files" | "output" | "settings";
 const WORKSPACE_STORAGE_KEY = "codeforge.workspace.v1";
@@ -92,6 +93,8 @@ export default function HomeScreen() {
   const currentFile = files.find((file) => file.id === activeFile) ?? files[0];
   const currentContent = contents[activeFile] ?? "";
   const workspaceStats = getWorkspaceStats(files, currentContent);
+  const diagnostics = analyzeSource(currentContent);
+  const workingTree = getWorkingTreeState(contents, INITIAL_CONTENT);
 
   const stats = useMemo(
     () => [
@@ -170,6 +173,12 @@ export default function HomeScreen() {
 
   const runFile = () => {
     runHaptic(Haptics.ImpactFeedbackStyle.Medium);
+    if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
+      setMode("output");
+      setIsRunning(false);
+      setLastRun(`Run blocked: ${diagnostics.length} source issue${diagnostics.length === 1 ? "" : "s"}`);
+      return;
+    }
     setIsRunning(true);
     setMode("output");
     setLastRun(`Running ${currentFile.name}`);
@@ -243,6 +252,9 @@ export default function HomeScreen() {
               </View>
             </View>
             <View style={styles.projectActions}>
+              <View style={styles.changePill}>
+                <Text style={styles.changeText}>{workingTree.changedCount} changed</Text>
+              </View>
               <View style={styles.trustPill}>
                 <View style={styles.trustDot} />
                 <Text style={styles.trustText}>TRUSTED</Text>
@@ -314,7 +326,10 @@ export default function HomeScreen() {
                   <Text style={styles.footerDivider}>•</Text>
                   <Text style={styles.footerText}>{currentFile.language}</Text>
                 </View>
-                <Text style={[styles.saveState, isDirty && styles.saveStateDirty]}>{isDirty ? "Unsaved changes" : "Saved locally"}</Text>
+                <View style={styles.footerStatus}>
+                  {diagnostics.length ? <Text style={styles.errorState}>{diagnostics.length} issue{diagnostics.length === 1 ? "" : "s"}</Text> : null}
+                  <Text style={[styles.saveState, isDirty && styles.saveStateDirty]}>{isDirty ? "Unsaved changes" : "Saved locally"}</Text>
+                </View>
               </View>
 
               <View style={styles.actionRow}>
@@ -462,6 +477,8 @@ const styles = StyleSheet.create({
   projectBar: { alignItems: "center", backgroundColor: "#191A22", borderBottomColor: "#2A2C38", borderBottomWidth: 1, borderTopColor: "#292B37", borderTopWidth: 1, flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 12 },
   projectInfo: { alignItems: "center", flexDirection: "row", gap: 10 },
   projectActions: { alignItems: "center", flexDirection: "row", gap: 7 },
+  changePill: { alignItems: "center", backgroundColor: "#342B1A", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6 },
+  changeText: { color: "#F5B84B", fontSize: 8, fontWeight: "800", letterSpacing: 0.5 },
   statusLight: { backgroundColor: "#45E0A6", borderRadius: 4, height: 8, shadowColor: "#45E0A6", shadowOpacity: 0.65, shadowRadius: 5, width: 8 },
   projectName: { color: "#E9E9F0", fontSize: 13, fontWeight: "700" },
   projectPath: { color: "#777C8D", fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 10, marginTop: 3 },
@@ -497,10 +514,12 @@ const styles = StyleSheet.create({
   noWrap: { minWidth: 520 },
   editorFooter: { alignItems: "center", backgroundColor: "#15161E", flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 18, paddingVertical: 9 },
   footerLeft: { alignItems: "center", flexDirection: "row", gap: 7 },
+  footerStatus: { alignItems: "center", flexDirection: "row", gap: 10 },
   footerText: { color: "#717688", fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 10 },
   footerDivider: { color: "#454957", fontSize: 10 },
   saveState: { color: "#4CCB9A", fontSize: 10 },
   saveStateDirty: { color: "#F5B84B" },
+  errorState: { color: "#FF7676", fontSize: 10, fontWeight: "700" },
   actionRow: { backgroundColor: "#101116", flexDirection: "row", gap: 10, paddingHorizontal: 18, paddingVertical: 14 },
   secondaryButton: { alignItems: "center", borderColor: "#3A3B4B", borderRadius: 9, borderWidth: 1, flex: 0.8, flexDirection: "row", gap: 8, justifyContent: "center", paddingVertical: 13 },
   secondaryButtonIcon: { color: "#A3A7B7", fontSize: 17, transform: [{ rotate: "180deg" }] },
