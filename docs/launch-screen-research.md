@@ -1,6 +1,6 @@
 # CodeForge Mobile Launch-Screen Investigation
 
-**Author:** Manus AI  
+**Author:** Manus AI
 **Status:** Implemented and verified in TypeScript
 
 ## Problem statement
