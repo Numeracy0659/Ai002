@@ -36,7 +36,7 @@ jobs:
           pnpm build
 
   android-debug:
-    name: Build Android debug APK (32-bit + 64-bit ARM)
+    name: Build Android debug APK (all standard ABIs)
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -64,10 +64,12 @@ jobs:
       - name: Build unsigned debug APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon --stacktrace
-      - name: Verify both ARM ABIs are packaged
+      - name: Verify all Android ABIs are packaged
         run: |
           unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -q 'lib/armeabi-v7a/'
           unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -q 'lib/arm64-v8a/'
+          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -q 'lib/x86/'
+          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -q 'lib/x86_64/'
       - name: Upload Android debug APK
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
