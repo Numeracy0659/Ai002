@@ -1,6 +1,7 @@
 import "@/global.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -22,6 +23,11 @@ import { initManusRuntime, subscribeSafeAreaInsets } from "@/lib/_core/manus-run
 const DEFAULT_WEB_INSETS: EdgeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 const DEFAULT_WEB_FRAME: Rect = { x: 0, y: 0, width: 0, height: 0 };
 
+// Keep the native launch screen until the navigation tree has rendered.
+// This call intentionally runs at module scope, as recommended by Expo.
+void SplashScreen.preventAutoHideAsync().catch(() => undefined);
+SplashScreen.setOptions({ duration: 180, fade: true });
+
 export const unstable_settings = {
   anchor: "(tabs)",
 };
@@ -32,6 +38,24 @@ export default function RootLayout() {
 
   const [insets, setInsets] = useState<EdgeInsets>(initialInsets);
   const [frame, setFrame] = useState<Rect>(initialFrame);
+  const [isRootLaidOut, setIsRootLaidOut] = useState(false);
+
+  const handleRootLayout = useCallback(() => {
+    setIsRootLaidOut(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isRootLaidOut) return;
+    void SplashScreen.hideAsync().catch(() => undefined);
+  }, [isRootLaidOut]);
+
+  // Never strand a user on the native splash if a platform layout callback is delayed.
+  useEffect(() => {
+    const fallback = setTimeout(() => {
+      void SplashScreen.hideAsync().catch(() => undefined);
+    }, 4000);
+    return () => clearTimeout(fallback);
+  }, []);
 
   // Initialize Manus runtime for cookie injection from parent container
   useEffect(() => {
@@ -79,7 +103,7 @@ export default function RootLayout() {
   }, [initialInsets, initialFrame]);
 
   const content = (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView onLayout={handleRootLayout} style={{ flex: 1 }}>
       <trpc.Provider client={trpcClient} queryClient={queryClient}>
         <QueryClientProvider client={queryClient}>
           {/* Default to hiding native headers so raw route segments don't appear (e.g. "(tabs)", "products/[id]"). */}
