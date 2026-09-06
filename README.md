@@ -327,49 +327,67 @@ The initial package service should use:
 
 ---
 
-## 11. Delivery phases and acceptance gates
+## 11. Implementation roadmap — current terminal slice to professional release
 
-### Phase 0: Remove false capability
+This is the authoritative hand-off plan. Implement phases in order, preserve the non-claims in this README, and never mark a phase complete from a desktop-only or mocked result. The repository has completed the filesystem/editor foundations, runtime/trust contracts, release preparation, and a first Android shell process-pipes slice. The next production-critical item is the NDK PTY terminal.
 
-Remove simulated output, hard-coded trust, fictional paths, and fake Git state. Make unsupported capabilities visibly unavailable.
+### Phase 5 — Complete the Android terminal
 
-**Gate:** No UI success state is possible without measured implementation state.
+**Current status:** Partial. CodeForge launches an app-private `/system/bin/sh` process through bounded Android process pipes. It is not yet a PTY terminal.
 
-### Phase 1: Filesystem
+Implement an NDK/JNI PTY backend behind a narrow Kotlin interface: `/dev/ptmx`, `grantpt`, `unlockpt`, slave open, `TIOCSWINSZ`, `fork`, `setsid`, `TIOCSCTTY`, `dup2` to standard streams, close-on-exec hygiene, nonblocking master I/O, partial-read/write handling, bounded queues, EOF/EIO handling, and `waitpid` reaping. Use explicit argv, app-private cwd, sanitized environment, and a fixed approved executable before widening command support.
 
-Implement the native project store, atomic saves, recovery journals, recursive operations, SAF import/export, ZIP validation, and storage-full recovery.
+Add a typed session state machine: `NEW → STARTING → RUNNING → STOPPING → EXITED | FAILED | LOST`. Implement stdin, Ctrl-C byte input, resize, a narrowly allowlisted TERM/INT/KILL policy, verified process-group cleanup, timeout, cancellation, and idempotent close. Add a private foreground-service owner only for user-visible sessions that need to continue while the editor is hidden; service death must produce `LOST`, not a fake running state.
 
-**Gate:** Kill the app during a write and verify that the file is complete and recoverable.
+Add a bounded terminal model: preserve bytes in transport, incrementally decode UTF-8, parse a scoped ANSI/VT subset, support colors/cursor/scrollback and alternate screen where tested, and render immutable snapshots. Never interpret terminal output as Android commands, trusted URLs, clipboard actions, or HTML.
 
-### Phase 2: Terminal
+**Acceptance gate:** On supported physical devices and airplane mode, launch the fixed shell, prove output came from the device with a nonce, type input, send Ctrl-C, resize with `stty size`, terminate the owned group, observe the real exit state, flood output without memory growth, rotate the Activity, stop the service, and verify no zombie or leaked session remains. Record API, ABI, device, and artifact.
 
-Implement Kotlin execution service, native PTY, process groups, stdin, output streaming, resize, Ctrl-C, cancellation, and interrupted-state recovery.
+### Phase 6 — Ship controlled runtime providers
 
-**Gate:** In airplane mode, run a nonce-producing command and independently verify that output came from the device process.
+Implement providers in this order: **QuickJS**, **WAMR/WASI**, then **bundled CPython**. Every provider requires immutable metadata: exact version, ABI, artifact digest, entrypoint, capability profile, memory/wall-time/idle limits, input/output quotas, and cancellation behavior. Use the existing typed `JobSpec` and runtime-trust contracts; never add `exec(command: String)`.
 
-### Phase 3: Editor
+QuickJS exposes no filesystem/network/native bridge by default and must support interruption and memory limits. WAMR/WASI uses explicit preopens/imports. CPython is an exact Android build with documented standard-library and native-extension limitations; do not promise desktop `venv` behavior. Provider artifacts require provenance, SHA-256 verification, licenses, ABI checks, transactional installation, rollback, and offline operation.
 
-Replace TextInput with CodeMirror 6 or a tested native editor surface. Add real sessions, tabs, recovery, search, language modes, and split layout.
+**Acceptance gate:** In airplane mode, run deterministic nonce programs for every enabled provider, verify real output and exit status, enforce limits, cancel a running job, deny undeclared capabilities, restart after interruption, and reject uninstalled or hash-mismatched providers.
 
-**Gate:** Force-stop the app during unsaved editing and restore the correct document state.
+### Phase 7 — Project trust and capability grants
 
-### Phase 4: Runtime providers
+Connect trust policy to every execution, package, Git, credential, terminal, and external-storage operation. New/imported projects begin `unknown` or `unverified`; inspection remains available, while privileged capabilities require visible project-scoped grants.
 
-Add QuickJS, CPython, and WAMR/WASI with explicit limits and capability profiles.
+Each grant must be plain-language, persisted, revocable, auditable, and optionally expiring. External access is an explicit SAF URI grant, not broad all-files access. Revocation affects new jobs and interrupts active jobs where supported. Emit redacted hash-chained audit events and never export secrets.
 
-**Gate:** Run offline, receive real output, enforce timeout/output limits, cancel execution, and verify denied capabilities.
+**Acceptance gate:** Import an untrusted project, prove privileged actions are denied, grant one capability, verify only that operation, revoke it, verify denial, export redacted audit evidence, restart, and confirm malformed/legacy records cannot silently grant access.
 
-### Phase 5: Git and packages
+### Phase 8 — Local Git and package management
 
-Add local Git, remote GitHub synchronization, signed package catalog, lockfiles, offline bundles, rollback, and license inventory.
+Add real local Git: working tree, object database, index, status, diff, commit, branches, clone/fetch/push, conflict recovery, credential isolation, and Keystore-backed secrets. Add a curated signed package catalog with exact versions, hashes, runtime/ABI compatibility, licenses, provenance, offline bundles, transactional activation, rollback, and reproducible lockfiles. Do not expose unrestricted `apt`, `npm`, PyPI, or arbitrary native downloads in the first release.
 
-**Gate:** Import or clone, modify, diff, commit, export, restore offline, and reproduce the locked environment.
+**Acceptance gate:** Import or clone, modify/diff/commit, export and restore offline, reproduce the lockfile, reject bad signatures/digests/licenses, recover interrupted activation, and prove no credential enters project export.
 
-### Phase 6: Release engineering
+### Phase 9 — Professional mobile IDE UX and observability
 
-Create production signing, ABI-specific APKs, SBOM, reproducibility metadata, upgrade tests, rollback tests, and a physical-device matrix.
+Complete the four primary destinations: Terminal, Editor, Project, and More. Add tabs/session recovery, large-file safeguards, syntax modes, bracket matching, diagnostics, command history, mobile developer keys, autocomplete, accessibility, split layouts, search/replace, job history, and explicit offline/device capability indicators.
 
-**Gate:** Install, upgrade, downgrade/recover, run offline, test process interruption, and verify signature continuity.
+All visible statuses must come from measured state machines. Distinguish unavailable bridge, missing runtime, denied capability, truncation, interruption, session loss, and storage-full states. Add redacted structured diagnostics, bounded retention, support bundles, and no raw secret or terminal-input logging by default.
+
+**Acceptance gate:** Test phones/tablets in portrait/landscape, keyboard and IME, rotation, accessibility, large files, output floods, offline mode, low storage, process death, and recovery. No fictional path, fake branch, simulated success, or root/unrestricted-Linux claim may remain.
+
+### Phase 10 — Release engineering and production distribution
+
+Make the checked-in Android Gradle project authoritative. Build with pinned toolchains, immutable CI actions, controlled dependency updates, protected release signing, ABI-specific artifacts where justified, SBOM, provenance, checksums, and signature continuity. Never use the debug keystore for distribution or commit keystore material.
+
+Qualify minimum/current Android APIs, ARM64, supported ARMv7/x86_64 test targets, low-memory/OEM battery policies, notifications, foreground-service restrictions, SELinux, PTY behavior, SAF providers, upgrades, migrations, rollback, and staged rollout. Add crash/ANR monitoring and emergency capability-disable switches.
+
+**Acceptance gate:** CI builds the checked-in project; installs the signed artifact; verifies bundle, ABI, signer, version, and SBOM; upgrades from the prior release; runs offline terminal/runtime/trust tests; force-stops and recovers; rolls back according to policy; and verifies no leaked credentials.
+
+### Deferred compatibility options
+
+PRoot/Alpine and QEMU linux-user may be evaluated only after Phase 10 measurements demonstrate demand. They are compatibility packs, not root, Docker, or security sandboxes. Remote execution requires authenticated transport and a separate threat model. A rooted-device mode is out of scope for the normal APK and must never be implied by Android shell support.
+
+### Handoff execution rules
+
+For every phase, create a design note, implement the smallest vertical slice, add unit/instrumentation/device tests before widening scope, derive UI from measured state, run all JavaScript/native checks, document environment limits, and commit code, tests, workflows, and documentation together. A phase is complete only when its acceptance gate passes on the supported physical-device matrix and the README truth table is updated.
 
 ---
 
