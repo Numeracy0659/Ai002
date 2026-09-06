@@ -3,7 +3,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -26,9 +26,11 @@ import {
   type FileItem,
 } from "@/lib/codeforge-workspace";
 import { analyzeSource, getWorkingTreeState } from "@/lib/codeforge-analysis";
+import { createWorkspaceSnapshot, WorkspaceStore } from "@/lib/codeforge-store";
 
 type Mode = "editor" | "files" | "output" | "settings";
-const WORKSPACE_STORAGE_KEY = "codeforge.workspace.v1";
+const LEGACY_WORKSPACE_STORAGE_KEY = "codeforge.workspace.v1";
+const workspaceStore = new WorkspaceStore(AsyncStorage);
 
 function runHaptic(style: Haptics.ImpactFeedbackStyle = Haptics.ImpactFeedbackStyle.Light) {
   if (Platform.OS !== "web") {
@@ -47,26 +49,23 @@ export default function HomeScreen() {
   const [fontSize, setFontSize] = useState(15);
   const [wordWrap, setWordWrap] = useState(true);
   const [isHydrated, setIsHydrated] = useState(false);
+  const workspaceRevisionRef = useRef(0);
   const [fileQuery, setFileQuery] = useState("");
 
   useEffect(() => {
     let isMounted = true;
-    AsyncStorage.getItem(WORKSPACE_STORAGE_KEY)
-      .then((stored) => {
+    Promise.all([AsyncStorage.getItem(LEGACY_WORKSPACE_STORAGE_KEY), workspaceStore.load()])
+      .then(async ([legacy, loaded]) => {
         if (!isMounted) return;
-        if (stored) {
-          try {
-            const workspace = JSON.parse(stored) as {
-              files?: FileItem[];
-              activeFile?: string;
-              contents?: Record<string, string>;
-            };
-            if (workspace.files?.length) setFiles(workspace.files);
-            if (workspace.activeFile) setActiveFile(workspace.activeFile);
-            if (workspace.contents) setContents((previous) => ({ ...previous, ...workspace.contents }));
-          } catch {
-            setLastRun("Started a fresh workspace");
-          }
+        const result = loaded.snapshot ? loaded : await workspaceStore.load(legacy ?? undefined);
+        if (result.snapshot) {
+          setFiles(result.snapshot.files);
+          setActiveFile(result.snapshot.activeFile);
+          setContents(result.snapshot.contents);
+          workspaceRevisionRef.current = result.revision;
+          if (result.recovered) setLastRun("Recovered the last complete workspace save");
+        } else {
+          setLastRun("Started a fresh workspace");
         }
         setIsHydrated(true);
       })
@@ -83,10 +82,12 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (!isHydrated) return;
-    AsyncStorage.setItem(
-      WORKSPACE_STORAGE_KEY,
-      JSON.stringify({ files, activeFile, contents }),
-    ).catch(() => setLastRun("Could not persist workspace"));
+    const snapshot = createWorkspaceSnapshot({ files, activeFile, contents });
+    workspaceStore.save(snapshot, workspaceRevisionRef.current)
+      .then((nextRevision) => {
+        workspaceRevisionRef.current = Math.max(workspaceRevisionRef.current, nextRevision);
+      })
+      .catch(() => setLastRun("Could not persist workspace safely"));
   }, [activeFile, contents, files, isHydrated]);
 
   const currentFile = files.find((file) => file.id === activeFile) ?? files[0];
