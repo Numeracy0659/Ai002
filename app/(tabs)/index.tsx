@@ -60,6 +60,9 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selection, setSelection] = useState<Selection>({ anchor: 0, head: 0 });
   const [nativeHost, setNativeHost] = useState<NativeHostState | null>(null);
+  const [terminalSessionId, setTerminalSessionId] = useState<string | null>(null);
+  const [terminalOutput, setTerminalOutput] = useState("");
+  const [terminalInput, setTerminalInput] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -72,6 +75,27 @@ export default function HomeScreen() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    const subscription = codeForgeNative.subscribeTerminalEvents((event) => {
+      if (event.sessionId !== terminalSessionId) return;
+      if (event.kind === "output" && event.payload) {
+        const payload = event.payload;
+        setTerminalOutput((previous) => `${previous}${base64ToText(payload)}`.slice(-12000));
+      } else if (event.kind === "output-truncated") {
+        setTerminalOutput((previous) => `${previous}\n[output truncated at the native session limit]\n`);
+        setIsRunning(false);
+      } else if (event.kind === "exit") {
+        setTerminalOutput((previous) => `${previous}\n[process exited with code ${event.payload ?? "unknown"}]\n`);
+        setIsRunning(false);
+        setTerminalSessionId(null);
+      } else if (event.kind === "error") {
+        setTerminalOutput((previous) => `${previous}\n[terminal error: ${event.payload ?? "unknown"}]\n`);
+        setIsRunning(false);
+      }
+    });
+    return () => subscription?.remove();
+  }, [terminalSessionId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -253,17 +277,51 @@ export default function HomeScreen() {
     }
   };
 
-  const runFile = () => {
+  const runFile = async () => {
     runHaptic(Haptics.ImpactFeedbackStyle.Medium);
-    if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
-      setMode("output");
+    setMode("output");
+    if (!codeForgeNative.available) {
       setIsRunning(false);
-      setLastRun(`Run blocked: ${diagnostics.length} source issue${diagnostics.length === 1 ? "" : "s"}`);
+      setLastRun("Android shell unavailable: use a development APK with the native bridge.");
       return;
     }
+    if (terminalSessionId) {
+      setLastRun("Android shell session is already running.");
+      return;
+    }
+    try {
+      const started = await codeForgeNative.startTerminal();
+      if (!started) throw new Error("Native Android terminal is unavailable");
+      setTerminalSessionId(started.sessionId);
+      setTerminalOutput(`CodeForge Android shell\n${started.cwd}\n$ `);
+      setIsRunning(true);
+      setLastRun("Android shell started in the app-private workspace. This is not root.");
+    } catch (error) {
+      setIsRunning(false);
+      setLastRun(error instanceof Error ? error.message : "Android shell could not start");
+    }
+  };
+
+  const sendTerminalInput = async () => {
+    if (!terminalSessionId || !terminalInput) return;
+    try {
+      await codeForgeNative.writeTerminalInput(terminalSessionId, `${terminalInput}\n`);
+      setTerminalInput("");
+    } catch (error) {
+      setLastRun(error instanceof Error ? error.message : "Terminal input failed");
+    }
+  };
+
+  const interruptTerminal = async () => {
+    if (terminalSessionId) await codeForgeNative.interruptTerminal(terminalSessionId);
+  };
+
+  const stopTerminal = async () => {
+    if (!terminalSessionId) return;
+    await codeForgeNative.terminateTerminal(terminalSessionId);
+    setTerminalSessionId(null);
     setIsRunning(false);
-    setMode("output");
-    setLastRun("Execution is unavailable until a supported on-device runtime is installed.");
+    setLastRun("Android shell stopped by the user.");
   };
 
   const createFile = () => {
@@ -493,16 +551,24 @@ export default function HomeScreen() {
             <View style={styles.panelView}>
               <View style={styles.panelHeadingRow}>
                 <View>
-                  <Text style={styles.panelEyebrow}>TERMINAL OUTPUT</Text>
-                  <Text style={styles.panelTitle}>{isRunning ? "Running task" : "Latest run"}</Text>
+                  <Text style={styles.panelEyebrow}>ANDROID SHELL</Text>
+                  <Text style={styles.panelTitle}>{isRunning ? "Live session" : "Terminal session"}</Text>
                 </View>
-                <View style={styles.unavailablePill}><Text style={styles.unavailableText}>UNAVAILABLE</Text></View>
+                <View style={[styles.unavailablePill, isRunning && styles.runningPill]}><Text style={styles.unavailableText}>{isRunning ? "RUNNING" : "LOCAL"}</Text></View>
               </View>
               <View style={styles.terminalCard}>
-                <Text style={styles.terminalMuted}>No process has been started.</Text>
-                <Text style={styles.terminalLine}>CodeForge does not ship a local runtime or PTY in this build.</Text>
-                <Text style={styles.terminalLine}>Your source remains editable and can be imported or shared.</Text>
-                {isRunning ? <Text style={styles.terminalCursor}>▌</Text> : null}
+                <ScrollView style={styles.terminalScroll} contentContainerStyle={styles.terminalScrollContent}>
+                  <Text style={styles.terminalLine}>{terminalOutput || "Press Run to start the app-private Android shell."}</Text>
+                </ScrollView>
+              </View>
+              <View style={styles.terminalInputRow}>
+                <TextInput value={terminalInput} onChangeText={setTerminalInput} onSubmitEditing={sendTerminalInput} editable={isRunning} placeholder={isRunning ? "Type a command" : "Start a shell first"} placeholderTextColor="#6F7485" autoCapitalize="none" autoCorrect={false} style={styles.terminalInput} />
+                <Pressable onPress={sendTerminalInput} disabled={!isRunning} style={({ pressed }) => [styles.terminalSend, !isRunning && styles.disabledButton, pressed && styles.buttonPressed]}><Text style={styles.terminalSendText}>Send</Text></Pressable>
+              </View>
+              <View style={styles.terminalControls}>
+                <Pressable onPress={interruptTerminal} disabled={!isRunning} style={({ pressed }) => [styles.secondaryButton, !isRunning && styles.disabledButton, pressed && styles.buttonPressed]}><Text style={styles.secondaryButtonText}>Ctrl-C</Text></Pressable>
+                <Pressable onPress={stopTerminal} disabled={!terminalSessionId} style={({ pressed }) => [styles.secondaryButton, !terminalSessionId && styles.disabledButton, pressed && styles.buttonPressed]}><Text style={styles.secondaryButtonText}>Stop</Text></Pressable>
+                <Text style={styles.terminalNotice}>App UID sandbox · no root</Text>
               </View>
               <View style={styles.lastRunCard}>
                 <Text style={styles.cardLabel}>STATUS</Text>
@@ -589,6 +655,10 @@ function bytesToBase64(bytes: Uint8Array): string {
 function base64ToBytes(base64: string): Uint8Array {
   const binary = atob(base64);
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function base64ToText(base64: string): string {
+  return new TextDecoder().decode(base64ToBytes(base64));
 }
 
 function NavButton({ label, icon, active, onPress }: { label: string; icon: string; active: boolean; onPress: () => void }) {
@@ -698,12 +768,22 @@ const styles = StyleSheet.create({
   statValue: { color: "#E9E9F0", fontSize: 20, fontWeight: "800" },
   statLabel: { color: "#717688", fontSize: 9, fontWeight: "800", letterSpacing: 1.1, marginTop: 5 },
   unavailablePill: { alignItems: "center", backgroundColor: "#342B1A", borderRadius: 8, paddingHorizontal: 9, paddingVertical: 7 },
+  runningPill: { backgroundColor: "#173A31" },
   unavailableText: { color: "#F5B84B", fontSize: 9, fontWeight: "800", letterSpacing: 1 },
   terminalCard: { backgroundColor: "#090A0E", borderColor: "#2B2D39", borderRadius: 12, borderWidth: 1, minHeight: 230, padding: 18 },
+  terminalScroll: { maxHeight: 260 },
+  terminalScrollContent: { paddingBottom: 10 },
   terminalLine: { color: "#D0D4DF", fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 12, lineHeight: 24 },
   terminalMuted: { color: "#6F7485" },
   terminalSuccess: { color: "#55D6A2" },
   terminalCursor: { color: "#8B5CF6", fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 13, marginTop: 5 },
+  terminalInputRow: { alignItems: "center", flexDirection: "row", gap: 8, marginTop: 12 },
+  terminalInput: { backgroundColor: "#191A22", borderColor: "#2B2D39", borderRadius: 8, borderWidth: 1, color: "#F1F3F8", flex: 1, fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 12, paddingHorizontal: 12, paddingVertical: 10 },
+  terminalSend: { backgroundColor: "#6D46C8", borderRadius: 8, paddingHorizontal: 13, paddingVertical: 11 },
+  terminalSendText: { color: "#FFFFFF", fontSize: 11, fontWeight: "800" },
+  terminalControls: { alignItems: "center", flexDirection: "row", gap: 8, marginTop: 10 },
+  terminalNotice: { color: "#74798A", flex: 1, fontSize: 10, textAlign: "right" },
+  disabledButton: { opacity: 0.45 },
   lastRunCard: { backgroundColor: "#191A22", borderColor: "#2B2D39", borderRadius: 10, borderWidth: 1, marginTop: 14, padding: 14 },
   lastRunText: { color: "#C7C9D4", fontSize: 12, marginTop: 3 },
   settingsContent: { paddingBottom: 30 },

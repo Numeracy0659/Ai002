@@ -1,4 +1,4 @@
-import { NativeModules, Platform } from "react-native";
+import { DeviceEventEmitter, NativeModules, Platform, type EmitterSubscription } from "react-native";
 
 export type NativeHostState = {
   apiLevel: number;
@@ -30,12 +30,31 @@ export type NativeCapabilityDecision = {
   reason?: string;
 };
 
+export type TerminalStartResult = {
+  sessionId: string;
+  state: "running";
+  cwd: string;
+  pty: boolean;
+  transport: "android-process-pipes";
+};
+
+export type TerminalEvent = {
+  sessionId: string;
+  kind: "started" | "output" | "output-truncated" | "signal" | "exit" | "error";
+  payload?: string;
+};
+
 type CodeForgeRuntimeNativeModule = {
   getHostState(): Promise<NativeHostState>;
   verifyArtifactSha256(base64Bytes: string, expectedSha256: string): Promise<ArtifactVerification>;
   setProjectTrust(projectId: string, requestedState: NativeTrustState["trustState"], artifactDigest: string | null, nativeVerified: boolean): Promise<NativeTrustState & { nativeVerified: boolean }>;
   getProjectTrust(projectId: string): Promise<NativeTrustState>;
   evaluateCapability(projectId: string, capabilityId: string): Promise<NativeCapabilityDecision>;
+  startTerminal(): Promise<TerminalStartResult>;
+  writeTerminalInput(sessionId: string, input: string): Promise<void>;
+  interruptTerminal(sessionId: string): Promise<void>;
+  terminateTerminal(sessionId: string): Promise<void>;
+  getTerminalState(sessionId: string): Promise<{ sessionId: string; state: string; pty: boolean; transport: string }>;
 };
 
 const nativeModule = NativeModules.CodeForgeRuntime as CodeForgeRuntimeNativeModule | undefined;
@@ -61,5 +80,25 @@ export const codeForgeNative = {
   async evaluateCapability(projectId: string, capabilityId: string): Promise<NativeCapabilityDecision | null> {
     if (!nativeModule || Platform.OS !== "android") return null;
     return nativeModule.evaluateCapability(projectId, capabilityId);
+  },
+  async startTerminal(): Promise<TerminalStartResult | null> {
+    if (!nativeModule || Platform.OS !== "android") return null;
+    return nativeModule.startTerminal();
+  },
+  async writeTerminalInput(sessionId: string, input: string): Promise<void> {
+    if (!nativeModule || Platform.OS !== "android") throw new Error("The Android terminal bridge is unavailable");
+    return nativeModule.writeTerminalInput(sessionId, input);
+  },
+  async interruptTerminal(sessionId: string): Promise<void> {
+    if (!nativeModule || Platform.OS !== "android") throw new Error("The Android terminal bridge is unavailable");
+    return nativeModule.interruptTerminal(sessionId);
+  },
+  async terminateTerminal(sessionId: string): Promise<void> {
+    if (!nativeModule || Platform.OS !== "android") throw new Error("The Android terminal bridge is unavailable");
+    return nativeModule.terminateTerminal(sessionId);
+  },
+  subscribeTerminalEvents(listener: (event: TerminalEvent) => void): EmitterSubscription | null {
+    if (!nativeModule || Platform.OS !== "android") return null;
+    return DeviceEventEmitter.addListener("CodeForgeTerminalEvent", listener);
   },
 };

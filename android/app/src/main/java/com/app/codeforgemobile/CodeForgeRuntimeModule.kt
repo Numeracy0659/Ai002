@@ -11,13 +11,19 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 class CodeForgeRuntimeModule(
   private val reactContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactContext) {
   private val preferences = reactContext.getSharedPreferences("codeforge.native.trust.v1", Context.MODE_PRIVATE)
+  private val terminalSessions = ConcurrentHashMap<String, TerminalSession>()
+  private val terminalExecutor = Executors.newCachedThreadPool()
 
   override fun getName(): String = "CodeForgeRuntime"
 
@@ -108,6 +114,104 @@ class CodeForgeRuntimeModule(
     promise.resolve(result)
   }
 
+  @ReactMethod
+  fun startTerminal(promise: Promise) {
+    try {
+      val sessionId = UUID.randomUUID().toString()
+      val workspace = java.io.File(reactContext.filesDir, "codeforge/v1/terminal/$sessionId")
+      if (!workspace.mkdirs() && !workspace.isDirectory) {
+        promise.reject("TERMINAL_WORKSPACE_FAILED", "Could not create the app-private terminal workspace")
+        return
+      }
+      val process = ProcessBuilder("/system/bin/sh")
+        .directory(workspace)
+        .redirectErrorStream(true)
+        .apply {
+          environment().clear()
+          environment()["HOME"] = workspace.absolutePath
+          environment()["PATH"] = "/system/bin:/system/xbin"
+          environment()["TERM"] = "xterm-256color"
+          environment()["LANG"] = "C.UTF-8"
+        }
+        .start()
+      val session = TerminalSession(sessionId, process, workspace, AtomicLong(0))
+      terminalSessions[sessionId] = session
+      emitTerminalEvent(sessionId, "started", null)
+      terminalExecutor.submit { readTerminalOutput(session) }
+      terminalExecutor.submit { waitForTerminal(session) }
+      val result = Arguments.createMap()
+      result.putString("sessionId", sessionId)
+      result.putString("state", "running")
+      result.putString("cwd", workspace.absolutePath)
+      result.putBoolean("pty", false)
+      result.putString("transport", "android-process-pipes")
+      promise.resolve(result)
+    } catch (error: Exception) {
+      promise.reject("TERMINAL_START_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun writeTerminalInput(sessionId: String, input: String, promise: Promise) {
+    val session = terminalSessions[sessionId]
+    if (session == null || !session.process.isAlive) {
+      promise.reject("TERMINAL_NOT_RUNNING", "The terminal session is not running")
+      return
+    }
+    if (input.toByteArray(Charsets.UTF_8).size > MAX_INPUT_BYTES) {
+      promise.reject("TERMINAL_INPUT_TOO_LARGE", "Terminal input exceeds the session limit")
+      return
+    }
+    try {
+      synchronized(session.process.outputStream) {
+        session.process.outputStream.write(input.toByteArray(Charsets.UTF_8))
+        session.process.outputStream.flush()
+      }
+      promise.resolve(null)
+    } catch (error: Exception) {
+      promise.reject("TERMINAL_WRITE_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun interruptTerminal(sessionId: String, promise: Promise) {
+    writeControlByte(sessionId, 0x03, promise)
+  }
+
+  @ReactMethod
+  fun terminateTerminal(sessionId: String, promise: Promise) {
+    val session = terminalSessions[sessionId]
+    if (session == null) {
+      promise.resolve(null)
+      return
+    }
+    session.process.destroy()
+    terminalExecutor.submit {
+      try {
+        if (!session.process.waitFor(750, java.util.concurrent.TimeUnit.MILLISECONDS)) session.process.destroyForcibly()
+      } finally {
+        promise.resolve(null)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun getTerminalState(sessionId: String, promise: Promise) {
+    val session = terminalSessions[sessionId]
+    val result = Arguments.createMap()
+    result.putString("sessionId", sessionId)
+    result.putString("state", if (session?.process?.isAlive == true) "running" else "exited")
+    result.putBoolean("pty", false)
+    result.putString("transport", "android-process-pipes")
+    promise.resolve(result)
+  }
+
+  @ReactMethod
+  fun addListener(eventName: String) = Unit
+
+  @ReactMethod
+  fun removeListeners(count: Int) = Unit
+
   private fun isOffline(): Boolean {
     val manager = reactContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
       ?: return true
@@ -136,7 +240,76 @@ class CodeForgeRuntimeModule(
   private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes)
     .joinToString(":") { byte -> "%02X".format(byte) }
 
+  private fun writeControlByte(sessionId: String, value: Int, promise: Promise) {
+    val session = terminalSessions[sessionId]
+    if (session == null || !session.process.isAlive) {
+      promise.reject("TERMINAL_NOT_RUNNING", "The terminal session is not running")
+      return
+    }
+    try {
+      synchronized(session.process.outputStream) {
+        session.process.outputStream.write(byteArrayOf(value.toByte()))
+        session.process.outputStream.flush()
+      }
+      emitTerminalEvent(sessionId, "signal", "INT")
+      promise.resolve(null)
+    } catch (error: Exception) {
+      promise.reject("TERMINAL_SIGNAL_FAILED", error.message, error)
+    }
+  }
+
+  private fun readTerminalOutput(session: TerminalSession) {
+    val buffer = ByteArray(4096)
+    try {
+      session.process.inputStream.use { stream ->
+        while (true) {
+          val count = stream.read(buffer)
+          if (count < 0) break
+          val total = session.outputBytes.addAndGet(count.toLong())
+          if (total > MAX_OUTPUT_BYTES) {
+            emitTerminalEvent(session.sessionId, "output-truncated", null)
+            session.process.destroy()
+            break
+          }
+          val chunk = Base64.encodeToString(buffer.copyOf(count), Base64.NO_WRAP)
+          emitTerminalEvent(session.sessionId, "output", chunk)
+        }
+      }
+    } catch (error: Exception) {
+      emitTerminalEvent(session.sessionId, "error", error.message ?: "Terminal output failed")
+    }
+  }
+
+  private fun waitForTerminal(session: TerminalSession) {
+    try {
+      val exitCode = session.process.waitFor()
+      emitTerminalEvent(session.sessionId, "exit", exitCode.toString())
+    } catch (error: InterruptedException) {
+      Thread.currentThread().interrupt()
+      emitTerminalEvent(session.sessionId, "error", "Terminal wait interrupted")
+    } finally {
+      terminalSessions.remove(session.sessionId)
+    }
+  }
+
+  private fun emitTerminalEvent(sessionId: String, kind: String, payload: String?) {
+    val event = Arguments.createMap()
+    event.putString("sessionId", sessionId)
+    event.putString("kind", kind)
+    if (payload != null) event.putString("payload", payload)
+    reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java).emit("CodeForgeTerminalEvent", event)
+  }
+
+  private data class TerminalSession(
+    val sessionId: String,
+    val process: Process,
+    val workspace: java.io.File,
+    val outputBytes: AtomicLong,
+  )
+
   companion object {
     private val SAFE_CAPABILITIES = setOf("clock", "randomness", "diagnostics.log", "storage.read", "storage.write")
+    private const val MAX_INPUT_BYTES = 64 * 1024
+    private const val MAX_OUTPUT_BYTES = 1024 * 1024
   }
 }
