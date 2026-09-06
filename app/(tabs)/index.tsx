@@ -28,6 +28,7 @@ import {
 import { analyzeSource, getWorkingTreeState } from "@/lib/codeforge-analysis";
 import { createWorkspaceSnapshot, WorkspaceStore } from "@/lib/codeforge-store";
 import { exportProjectArchive, importProjectArchive, makeProjectId, saveProjectSnapshot, snapshotFromFiles } from "@/lib/codeforge-project-store";
+import { EditorSessionManager } from "@/lib/codeforge-editor";
 
 type Mode = "editor" | "files" | "output" | "settings";
 const LEGACY_WORKSPACE_STORAGE_KEY = "codeforge.workspace.v1";
@@ -52,7 +53,9 @@ export default function HomeScreen() {
   const [isHydrated, setIsHydrated] = useState(false);
   const workspaceRevisionRef = useRef(0);
   const projectIdRef = useRef(makeProjectId(1_757_000_000_000));
+  const editorManagerRef = useRef(new EditorSessionManager());
   const [fileQuery, setFileQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -83,6 +86,15 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => {
+    if (!isHydrated || !activeFile) return;
+    const session = editorManagerRef.current.open(activeFile, contents[activeFile] ?? "");
+    if (session.text !== (contents[activeFile] ?? "")) {
+      session.apply([{ from: 0, to: session.text.length, insert: contents[activeFile] ?? "" }], { source: "restore", groupId: "restore" });
+      session.markSaved();
+    }
+  }, [activeFile, contents, isHydrated]);
+
+  useEffect(() => {
     if (!isHydrated) return;
     const snapshot = createWorkspaceSnapshot({ files, activeFile, contents });
     workspaceStore.save(snapshot, workspaceRevisionRef.current)
@@ -94,6 +106,16 @@ export default function HomeScreen() {
 
   const currentFile = files.find((file) => file.id === activeFile) ?? files[0];
   const currentContent = contents[activeFile] ?? "";
+  const currentSession = editorManagerRef.current.get(activeFile);
+  const currentSessionVersion = currentSession?.version;
+  const searchMatches = useMemo(() => {
+    if (!currentSession || currentSessionVersion === undefined || !searchQuery.trim()) return [];
+    try {
+      return currentSession.search({ query: searchQuery, maxResults: 200 });
+    } catch {
+      return [];
+    }
+  }, [currentSession, currentSessionVersion, searchQuery]);
   const workspaceStats = getWorkspaceStats(files, currentContent);
   const diagnostics = analyzeSource(currentContent);
   const workingTree = getWorkingTreeState(contents, INITIAL_CONTENT);
@@ -119,8 +141,34 @@ export default function HomeScreen() {
   const selectFile = (file: FileItem) => {
     runHaptic();
     setActiveFile(file.id);
+    setSearchQuery("");
     setMode("editor");
     setLastRun(`Loaded ${file.name}`);
+  };
+
+  const applyEditorText = (value: string) => {
+    const session = editorManagerRef.current.open(activeFile, currentContent);
+    const change = deriveTextChange(session.text, value);
+    if (!change) return;
+    session.apply([change], { source: "typing", groupId: `${activeFile}:typing` });
+    setContents((previous) => ({ ...previous, [activeFile]: session.text }));
+    setIsDirty(true);
+  };
+
+  const undoEdit = () => {
+    const session = editorManagerRef.current.open(activeFile, currentContent);
+    if (session.undo()) {
+      setContents((previous) => ({ ...previous, [activeFile]: session.text }));
+      setIsDirty(true);
+    }
+  };
+
+  const redoEdit = () => {
+    const session = editorManagerRef.current.open(activeFile, currentContent);
+    if (session.redo()) {
+      setContents((previous) => ({ ...previous, [activeFile]: session.text }));
+      setIsDirty(true);
+    }
   };
 
   const saveFile = async () => {
@@ -301,9 +349,21 @@ export default function HomeScreen() {
                   <Text style={styles.breadcrumbSlash}>/</Text>
                   <Text style={styles.breadcrumbActive}>{currentFile.name}</Text>
                 </View>
-                <View style={styles.languagePill}>
-                  <View style={[styles.languageDot, { backgroundColor: currentFile.color }]} />
-                  <Text style={styles.languagePillText}>{currentFile.language}</Text>
+                <View style={styles.editorTools}>
+                  <TextInput
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    placeholder="Find in file"
+                    placeholderTextColor="#74798A"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={styles.findInput}
+                  />
+                  {searchQuery ? <Text style={styles.findCount}>{searchMatches.length}</Text> : null}
+                  <View style={styles.languagePill}>
+                    <View style={[styles.languageDot, { backgroundColor: currentFile.color }]} />
+                    <Text style={styles.languagePillText}>{currentFile.language}</Text>
+                  </View>
                 </View>
               </View>
 
@@ -315,10 +375,7 @@ export default function HomeScreen() {
                 </View>
                 <TextInput
                   value={currentContent}
-                  onChangeText={(value) => {
-                    setContents((previous) => ({ ...previous, [activeFile]: value }));
-                    setIsDirty(true);
-                  }}
+                  onChangeText={applyEditorText}
                   multiline
                   scrollEnabled
                   textAlignVertical="top"
@@ -343,6 +400,12 @@ export default function HomeScreen() {
               </View>
 
               <View style={styles.actionRow}>
+                <Pressable onPress={undoEdit} style={({ pressed }) => [styles.iconButton, pressed && styles.buttonPressed]} accessibilityLabel="Undo edit">
+                  <Text style={styles.iconButtonText}>↶</Text>
+                </Pressable>
+                <Pressable onPress={redoEdit} style={({ pressed }) => [styles.iconButton, pressed && styles.buttonPressed]} accessibilityLabel="Redo edit">
+                  <Text style={styles.iconButtonText}>↷</Text>
+                </Pressable>
                 <Pressable onPress={saveFile} style={({ pressed }) => [styles.secondaryButton, pressed && styles.buttonPressed]}>
                   <Text style={styles.secondaryButtonIcon}>↥</Text>
                   <Text style={styles.secondaryButtonText}>Save</Text>
@@ -466,6 +529,19 @@ export default function HomeScreen() {
   );
 }
 
+function deriveTextChange(previous: string, next: string): { from: number; to: number; insert: string } | null {
+  if (previous === next) return null;
+  let from = 0;
+  while (from < previous.length && from < next.length && previous[from] === next[from]) from += 1;
+  let previousEnd = previous.length;
+  let nextEnd = next.length;
+  while (previousEnd > from && nextEnd > from && previous[previousEnd - 1] === next[nextEnd - 1]) {
+    previousEnd -= 1;
+    nextEnd -= 1;
+  }
+  return { from, to: previousEnd, insert: next.slice(from, nextEnd) };
+}
+
 function makeFileItem(name: string): FileItem {
   const lower = name.toLowerCase();
   const isPython = lower.endsWith(".py");
@@ -537,6 +613,9 @@ const styles = StyleSheet.create({
   newTab: { paddingHorizontal: 10, paddingVertical: 10 },
   newTabText: { color: "#8E93A6", fontSize: 20 },
   editorHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 14 },
+  editorTools: { alignItems: "center", flexDirection: "row", gap: 7 },
+  findInput: { backgroundColor: "#191A22", borderColor: "#343644", borderRadius: 7, borderWidth: 1, color: "#E3E4EC", fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 10, maxWidth: 115, paddingHorizontal: 8, paddingVertical: 6 },
+  findCount: { color: "#8B5CF6", fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 10 },
   breadcrumbs: { alignItems: "center", flexDirection: "row", gap: 7 },
   breadcrumbMuted: { color: "#73798A", fontSize: 11 },
   breadcrumbSlash: { color: "#484B59", fontSize: 11 },
@@ -559,6 +638,8 @@ const styles = StyleSheet.create({
   saveStateDirty: { color: "#F5B84B" },
   errorState: { color: "#FF7676", fontSize: 10, fontWeight: "700" },
   actionRow: { backgroundColor: "#101116", flexDirection: "row", gap: 10, paddingHorizontal: 18, paddingVertical: 14 },
+  iconButton: { alignItems: "center", borderColor: "#3A3B4B", borderRadius: 9, borderWidth: 1, justifyContent: "center", paddingHorizontal: 13, paddingVertical: 13 },
+  iconButtonText: { color: "#A3A7B7", fontSize: 18 },
   secondaryButton: { alignItems: "center", borderColor: "#3A3B4B", borderRadius: 9, borderWidth: 1, flex: 0.8, flexDirection: "row", gap: 8, justifyContent: "center", paddingVertical: 13 },
   secondaryButtonIcon: { color: "#A3A7B7", fontSize: 17, transform: [{ rotate: "180deg" }] },
   secondaryButtonText: { color: "#C4C7D2", fontSize: 13, fontWeight: "700" },
