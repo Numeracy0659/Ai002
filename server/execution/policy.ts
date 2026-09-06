@@ -36,8 +36,7 @@ export function isPrivateOrMetadataHost(hostname: string): boolean {
   return normalized === "localhost" || normalized === "metadata.google.internal" || normalized === "metadata" ||
     normalized === "0.0.0.0" || normalized === "127.0.0.1" || normalized === "::1" ||
     normalized.startsWith("10.") || normalized.startsWith("192.168.") || normalized.startsWith("169.254.") ||
-    normalized.startsWith("172.16.") || normalized.startsWith("172.17.") || normalized.startsWith("172.18.") ||
-    normalized.startsWith("172.19.") || normalized.startsWith("172.2");
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(normalized);
 }
 
 export const EXECUTION_LIMITS = { MAX_SOURCE_BYTES, MAX_INPUT_BYTES, MAX_TIMEOUT_MS } as const;

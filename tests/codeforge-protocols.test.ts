@@ -16,6 +16,8 @@ describe("execution policy", () => {
   it("rejects unsafe execution policy expansion and private hosts", () => {
     expect(() => createExecutionPlan({ language: "python", source: "x", network: "allowed" })).toThrow();
     expect(isPrivateOrMetadataHost("169.254.169.254")).toBe(true);
+    expect(isPrivateOrMetadataHost("172.31.255.255")).toBe(true);
+    expect(isPrivateOrMetadataHost("172.32.0.1")).toBe(false);
     expect(isPrivateOrMetadataHost("example.com")).toBe(false);
   });
 });

@@ -37,12 +37,6 @@ console.log(greet("CodeForge"));`,
 }`,
 };
 
-export const OUTPUT_LINES = [
-  { tone: "muted", text: "$ codeforge run main.py" },
-  { tone: "success", text: "✓ Python 3.12 · execution completed" },
-  { tone: "normal", text: "Hello, CodeForge!" },
-  { tone: "muted", text: "Process finished with exit code 0" },
-] as const;
 
 export function getWorkspaceStats(files: FileItem[], content: string) {
   return {

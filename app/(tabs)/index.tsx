@@ -21,7 +21,6 @@ import { ScreenContainer } from "@/components/screen-container";
 import {
   FILES,
   INITIAL_CONTENT,
-  OUTPUT_LINES,
   getWorkspaceStats,
   makeScratchFile,
   type FileItem,
@@ -44,7 +43,7 @@ export default function HomeScreen() {
   const [contents, setContents] = useState(INITIAL_CONTENT);
   const [isDirty, setIsDirty] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
-  const [lastRun, setLastRun] = useState("Ready to run");
+  const [lastRun, setLastRun] = useState("Execution is not available in this build");
   const [fontSize, setFontSize] = useState(15);
   const [wordWrap, setWordWrap] = useState(true);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -179,13 +178,9 @@ export default function HomeScreen() {
       setLastRun(`Run blocked: ${diagnostics.length} source issue${diagnostics.length === 1 ? "" : "s"}`);
       return;
     }
-    setIsRunning(true);
+    setIsRunning(false);
     setMode("output");
-    setLastRun(`Running ${currentFile.name}`);
-    setTimeout(() => {
-      setIsRunning(false);
-      setLastRun("Run completed successfully");
-    }, 650);
+    setLastRun("Execution is unavailable until a supported on-device runtime is installed.");
   };
 
   const createFile = () => {
@@ -248,16 +243,16 @@ export default function HomeScreen() {
               <View style={styles.statusLight} />
               <View>
                 <Text style={styles.projectName}>mobile-lab</Text>
-                <Text style={styles.projectPath}>~/projects/mobile-lab</Text>
+                <Text style={styles.projectPath}>app-private project</Text>
               </View>
             </View>
             <View style={styles.projectActions}>
               <View style={styles.changePill}>
                 <Text style={styles.changeText}>{workingTree.changedCount} changed</Text>
               </View>
-              <View style={styles.trustPill}>
+              <View style={styles.restrictedPill}>
                 <View style={styles.trustDot} />
-                <Text style={styles.trustText}>TRUSTED</Text>
+                <Text style={styles.restrictedText}>RESTRICTED</Text>
               </View>
               <View style={styles.branchPill}>
                 <Text style={styles.branchIcon}>⑂</Text>
@@ -343,7 +338,7 @@ export default function HomeScreen() {
                 </Pressable>
                 <Pressable onPress={runFile} style={({ pressed }) => [styles.runButton, pressed && styles.buttonPressed]}>
                   <Text style={styles.runButtonIcon}>{isRunning ? "◌" : "▶"}</Text>
-                  <Text style={styles.runButtonText}>{isRunning ? "Running" : "Run file"}</Text>
+                  <Text style={styles.runButtonText}>{isRunning ? "Running" : "Run unavailable"}</Text>
                 </Pressable>
               </View>
             </View>
@@ -400,12 +395,12 @@ export default function HomeScreen() {
                   <Text style={styles.panelEyebrow}>TERMINAL OUTPUT</Text>
                   <Text style={styles.panelTitle}>{isRunning ? "Running task" : "Latest run"}</Text>
                 </View>
-                <View style={styles.connectedPill}><View style={styles.connectedDot} /><Text style={styles.connectedText}>SANDBOX</Text></View>
+                <View style={styles.unavailablePill}><Text style={styles.unavailableText}>UNAVAILABLE</Text></View>
               </View>
               <View style={styles.terminalCard}>
-                {OUTPUT_LINES.map((line, index) => (
-                  <Text key={`${line.text}-${index}`} style={[styles.terminalLine, line.tone === "muted" && styles.terminalMuted, line.tone === "success" && styles.terminalSuccess]}>{line.text}</Text>
-                ))}
+                <Text style={styles.terminalMuted}>No process has been started.</Text>
+                <Text style={styles.terminalLine}>CodeForge does not ship a local runtime or PTY in this build.</Text>
+                <Text style={styles.terminalLine}>Your source remains editable and can be imported or shared.</Text>
                 {isRunning ? <Text style={styles.terminalCursor}>▌</Text> : null}
               </View>
               <View style={styles.lastRunCard}>
@@ -485,9 +480,9 @@ const styles = StyleSheet.create({
   branchPill: { alignItems: "center", backgroundColor: "#252632", borderRadius: 8, flexDirection: "row", gap: 5, paddingHorizontal: 9, paddingVertical: 6 },
   branchIcon: { color: "#A78BFA", fontSize: 13 },
   branchText: { color: "#B7B8C8", fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 10 },
-  trustPill: { alignItems: "center", backgroundColor: "#17352F", borderRadius: 8, flexDirection: "row", gap: 5, paddingHorizontal: 8, paddingVertical: 6 },
-  trustDot: { backgroundColor: "#45E0A6", borderRadius: 3, height: 6, width: 6 },
-  trustText: { color: "#69DDB1", fontSize: 8, fontWeight: "800", letterSpacing: 0.8 },
+  restrictedPill: { alignItems: "center", backgroundColor: "#342B1A", borderRadius: 8, flexDirection: "row", gap: 5, paddingHorizontal: 8, paddingVertical: 6 },
+  trustDot: { backgroundColor: "#F5B84B", borderRadius: 3, height: 6, width: 6 },
+  restrictedText: { color: "#F5B84B", fontSize: 8, fontWeight: "800", letterSpacing: 0.8 },
   editorArea: { flex: 1 },
   fileTabs: { alignItems: "center", backgroundColor: "#171820", borderBottomColor: "#2A2C38", borderBottomWidth: 1, paddingHorizontal: 14 },
   fileTab: { alignItems: "center", borderBottomColor: "transparent", borderBottomWidth: 2, flexDirection: "row", gap: 6, paddingHorizontal: 12, paddingVertical: 13 },
@@ -554,9 +549,8 @@ const styles = StyleSheet.create({
   statCard: { backgroundColor: "#191A22", borderColor: "#2B2D39", borderRadius: 10, borderWidth: 1, flex: 1, padding: 14 },
   statValue: { color: "#E9E9F0", fontSize: 20, fontWeight: "800" },
   statLabel: { color: "#717688", fontSize: 9, fontWeight: "800", letterSpacing: 1.1, marginTop: 5 },
-  connectedPill: { alignItems: "center", backgroundColor: "#17352F", borderRadius: 8, flexDirection: "row", gap: 6, paddingHorizontal: 9, paddingVertical: 7 },
-  connectedDot: { backgroundColor: "#45E0A6", borderRadius: 4, height: 7, width: 7 },
-  connectedText: { color: "#69DDB1", fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  unavailablePill: { alignItems: "center", backgroundColor: "#342B1A", borderRadius: 8, paddingHorizontal: 9, paddingVertical: 7 },
+  unavailableText: { color: "#F5B84B", fontSize: 9, fontWeight: "800", letterSpacing: 1 },
   terminalCard: { backgroundColor: "#090A0E", borderColor: "#2B2D39", borderRadius: 12, borderWidth: 1, minHeight: 230, padding: 18 },
   terminalLine: { color: "#D0D4DF", fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }), fontSize: 12, lineHeight: 24 },
   terminalMuted: { color: "#6F7485" },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { FILES, INITIAL_CONTENT, getWorkspaceStats, makeScratchFile, OUTPUT_LINES } from "../lib/codeforge-workspace";
+import { FILES, INITIAL_CONTENT, getWorkspaceStats, makeScratchFile } from "../lib/codeforge-workspace";
 
 describe("CodeForge workspace model", () => {
   it("ships with runnable starter files across common mobile runtimes", () => {
@@ -15,6 +15,5 @@ describe("CodeForge workspace model", () => {
 
   it("creates a predictable scratch file for the new-file flow", () => {
     expect(makeScratchFile()).toMatchObject({ id: "scratch.js", language: "JavaScript" });
-    expect(OUTPUT_LINES.at(-1)?.text).toContain("exit code 0");
   });
 });
