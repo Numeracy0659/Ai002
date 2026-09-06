@@ -185,6 +185,7 @@ class CodeForgeRuntimeModule(
       promise.resolve(null)
       return
     }
+    session.state = TerminalContract.State.STOPPING
     session.process.destroy()
     terminalExecutor.submit {
       try {
@@ -200,7 +201,7 @@ class CodeForgeRuntimeModule(
     val session = terminalSessions[sessionId]
     val result = Arguments.createMap()
     result.putString("sessionId", sessionId)
-    result.putString("state", if (session?.process?.isAlive == true) "running" else "exited")
+    result.putString("state", session?.state?.name?.lowercase() ?: TerminalContract.State.LOST.name.lowercase())
     result.putBoolean("pty", false)
     result.putString("transport", "android-process-pipes")
     promise.resolve(result)
@@ -267,6 +268,7 @@ class CodeForgeRuntimeModule(
           if (count < 0) break
           val total = session.outputBytes.addAndGet(count.toLong())
           if (total > MAX_OUTPUT_BYTES) {
+            session.state = TerminalContract.State.FAILED
             emitTerminalEvent(session.sessionId, "output-truncated", null)
             session.process.destroy()
             break
@@ -276,6 +278,7 @@ class CodeForgeRuntimeModule(
         }
       }
     } catch (error: Exception) {
+      session.state = TerminalContract.State.FAILED
       emitTerminalEvent(session.sessionId, "error", error.message ?: "Terminal output failed")
     }
   }
@@ -283,9 +286,11 @@ class CodeForgeRuntimeModule(
   private fun waitForTerminal(session: TerminalSession) {
     try {
       val exitCode = session.process.waitFor()
+      session.state = TerminalContract.State.EXITED
       emitTerminalEvent(session.sessionId, "exit", exitCode.toString())
     } catch (error: InterruptedException) {
       Thread.currentThread().interrupt()
+      session.state = TerminalContract.State.LOST
       emitTerminalEvent(session.sessionId, "error", "Terminal wait interrupted")
     } finally {
       terminalSessions.remove(session.sessionId)
@@ -305,11 +310,13 @@ class CodeForgeRuntimeModule(
     val process: Process,
     val workspace: java.io.File,
     val outputBytes: AtomicLong,
-  )
+  ) {
+    @Volatile var state: TerminalContract.State = TerminalContract.State.RUNNING
+  }
 
   companion object {
     private val SAFE_CAPABILITIES = setOf("clock", "randomness", "diagnostics.log", "storage.read", "storage.write")
-    private const val MAX_INPUT_BYTES = 64 * 1024
-    private const val MAX_OUTPUT_BYTES = 1024 * 1024
+    private const val MAX_INPUT_BYTES = TerminalContract.MAX_INPUT_BYTES
+    private const val MAX_OUTPUT_BYTES = TerminalContract.MAX_OUTPUT_BYTES
   }
 }
