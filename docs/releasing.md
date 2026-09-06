@@ -2,7 +2,7 @@
 
 ## Scope
 
-The repository defines **Phase 6** as release engineering. It does not define a Phase 7. This document therefore treats Phase 7 only as a conditional post-release hardening process, triggered by measured release-health or supply-chain evidence rather than by speculative feature work.
+The corrected product plan places release hardening in **Phase 10**. The runtime and trust work belongs to Phases 6 and 7 and is documented separately in [`phase-6-7-runtime-trust-architecture.md`](phase-6-7-runtime-trust-architecture.md). This document remains the release-engineering foundation for the later release milestone.
 
 ## Release identity
 
