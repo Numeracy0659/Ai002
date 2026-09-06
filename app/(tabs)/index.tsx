@@ -28,7 +28,8 @@ import {
 import { analyzeSource, getWorkingTreeState } from "@/lib/codeforge-analysis";
 import { createWorkspaceSnapshot, WorkspaceStore } from "@/lib/codeforge-store";
 import { exportProjectArchive, importProjectArchive, makeProjectId, saveProjectSnapshot, snapshotFromFiles } from "@/lib/codeforge-project-store";
-import { EditorSessionManager } from "@/lib/codeforge-editor";
+import { EditorSessionManager, type Selection } from "@/lib/codeforge-editor";
+import { CodeForgeEditorSurface } from "@/components/codeforge-editor-surface";
 
 type Mode = "editor" | "files" | "output" | "settings";
 const LEGACY_WORKSPACE_STORAGE_KEY = "codeforge.workspace.v1";
@@ -56,6 +57,7 @@ export default function HomeScreen() {
   const editorManagerRef = useRef(new EditorSessionManager());
   const [fileQuery, setFileQuery] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [selection, setSelection] = useState<Selection>({ anchor: 0, head: 0 });
 
   useEffect(() => {
     let isMounted = true;
@@ -92,6 +94,7 @@ export default function HomeScreen() {
       session.apply([{ from: 0, to: session.text.length, insert: contents[activeFile] ?? "" }], { source: "restore", groupId: "restore" });
       session.markSaved();
     }
+    setSelection(session.selection);
   }, [activeFile, contents, isHydrated]);
 
   useEffect(() => {
@@ -151,6 +154,7 @@ export default function HomeScreen() {
     const change = deriveTextChange(session.text, value);
     if (!change) return;
     session.apply([change], { source: "typing", groupId: `${activeFile}:typing` });
+    setSelection(session.selection);
     setContents((previous) => ({ ...previous, [activeFile]: session.text }));
     setIsDirty(true);
   };
@@ -158,6 +162,7 @@ export default function HomeScreen() {
   const undoEdit = () => {
     const session = editorManagerRef.current.open(activeFile, currentContent);
     if (session.undo()) {
+      setSelection(session.selection);
       setContents((previous) => ({ ...previous, [activeFile]: session.text }));
       setIsDirty(true);
     }
@@ -166,6 +171,7 @@ export default function HomeScreen() {
   const redoEdit = () => {
     const session = editorManagerRef.current.open(activeFile, currentContent);
     if (session.redo()) {
+      setSelection(session.selection);
       setContents((previous) => ({ ...previous, [activeFile]: session.text }));
       setIsDirty(true);
     }
@@ -373,15 +379,15 @@ export default function HomeScreen() {
                     <Text key={`${activeFile}-line-${index}`} style={[styles.lineNumber, index === 0 && styles.lineNumberActive]}>{index + 1}</Text>
                   ))}
                 </View>
-                <TextInput
+                <CodeForgeEditorSurface
                   value={currentContent}
-                  onChangeText={applyEditorText}
-                  multiline
+                  selection={selection}
+                  onSelectionChange={(nextSelection) => {
+                    setSelection(nextSelection);
+                    editorManagerRef.current.get(activeFile)?.setSelection(nextSelection);
+                  }}
+                  onTextChange={applyEditorText}
                   scrollEnabled
-                  textAlignVertical="top"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  spellCheck={false}
                   style={[styles.codeInput, { fontSize, lineHeight: fontSize * 1.55 }, !wordWrap && styles.noWrap]}
                   selectionColor="#8B5CF6"
                 />
