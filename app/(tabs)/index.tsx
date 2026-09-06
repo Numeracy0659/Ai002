@@ -63,6 +63,7 @@ export default function HomeScreen() {
   const [terminalSessionId, setTerminalSessionId] = useState<string | null>(null);
   const [terminalOutput, setTerminalOutput] = useState("");
   const [terminalInput, setTerminalInput] = useState("");
+  const terminalSequenceRef = useRef(0);
 
   useEffect(() => {
     let isMounted = true;
@@ -79,6 +80,7 @@ export default function HomeScreen() {
   useEffect(() => {
     const subscription = codeForgeNative.subscribeTerminalEvents((event) => {
       if (event.sessionId !== terminalSessionId) return;
+      if (event.sequence !== undefined) terminalSequenceRef.current = Math.max(terminalSequenceRef.current, event.sequence);
       if (event.kind === "output" && event.payload) {
         const payload = event.payload;
         setTerminalOutput((previous) => `${previous}${base64ToText(payload)}`.slice(-12000));
@@ -94,6 +96,14 @@ export default function HomeScreen() {
         setIsRunning(false);
       }
     });
+    if (terminalSessionId) {
+      void codeForgeNative.replayTerminal(terminalSessionId, terminalSequenceRef.current).then((events) => {
+        events.forEach((event) => {
+          terminalSequenceRef.current = Math.max(terminalSequenceRef.current, event.sequence);
+          if (event.kind === "output" && event.payload) setTerminalOutput((previous) => `${previous}${base64ToText(event.payload!)}`.slice(-12000));
+        });
+      }).catch(() => setLastRun("Terminal replay is unavailable; live output remains active"));
+    }
     return () => subscription?.remove();
   }, [terminalSessionId]);
 
@@ -307,6 +317,7 @@ export default function HomeScreen() {
       const started = await codeForgeNative.startTerminal();
       if (!started) throw new Error("Native Android terminal is unavailable");
       setTerminalSessionId(started.sessionId);
+      terminalSequenceRef.current = 0;
       setTerminalOutput(`CodeForge Android shell\n${started.cwd}\n$ `);
       setIsRunning(true);
       setLastRun("Android shell started in the app-private workspace. This is not root.");
@@ -570,7 +581,12 @@ export default function HomeScreen() {
                 </View>
                 <View style={[styles.unavailablePill, isRunning && styles.runningPill]}><Text style={styles.unavailableText}>{isRunning ? "RUNNING" : "LOCAL"}</Text></View>
               </View>
-              <View style={styles.terminalCard}>
+              <View style={styles.terminalCard} onLayout={(event) => {
+                if (!terminalSessionId) return;
+                const rows = Math.max(1, Math.min(200, Math.floor(event.nativeEvent.layout.height / 22)));
+                const columns = Math.max(1, Math.min(400, Math.floor(event.nativeEvent.layout.width / 8)));
+                void codeForgeNative.resizeTerminal(terminalSessionId, rows, columns).catch(() => undefined);
+              }}>
                 <ScrollView style={styles.terminalScroll} contentContainerStyle={styles.terminalScrollContent}>
                   <Text style={styles.terminalLine}>{terminalOutput || "Press Run to start the app-private Android shell."}</Text>
                 </ScrollView>

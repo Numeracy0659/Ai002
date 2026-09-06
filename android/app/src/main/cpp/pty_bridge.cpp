@@ -174,7 +174,6 @@ Java_com_app_codeforgemobile_PtyNative_close(JNIEnv*, jclass, jlong handle) {
     kill(-session->process_group, SIGTERM);
     usleep(100000);
     kill(-session->process_group, SIGKILL);
-    waitpid(session->process_group, nullptr, 0);
   }
   closeFd(&session->master);
   delete session;

@@ -55,7 +55,7 @@ class CodeForgeRuntimeModule(
 
   override fun getName(): String = "CodeForgeRuntime"
 
-  override fun onTerminalEvent(sessionId: String, kind: String, payload: String?) = emitTerminalEvent(sessionId, kind, payload)
+  override fun onTerminalEvent(sessionId: String, sequence: Long, kind: String, payload: String?) = emitTerminalEvent(sessionId, sequence, kind, payload)
 
   override fun invalidate() {
     terminalService?.removeListener(this)
@@ -220,6 +220,31 @@ class CodeForgeRuntimeModule(
   }
 
   @ReactMethod
+  fun resizeTerminal(sessionId: String, rows: Int, columns: Int, promise: Promise) {
+    try {
+      terminalService?.resize(sessionId, rows, columns) ?: error("The terminal service is unavailable")
+      promise.resolve(null)
+    } catch (error: Exception) {
+      promise.reject("TERMINAL_RESIZE_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun replayTerminal(sessionId: String, afterSequence: Double, promise: Promise) {
+    try {
+      val result = Arguments.createArray()
+      terminalService?.replay(sessionId, afterSequence.toLong())?.forEach { event ->
+        val map = Arguments.createMap()
+        event.forEach { (key, value) -> if (key == "sequence") map.putInt(key, value.toInt()) else map.putString(key, value) }
+        result.pushMap(map)
+      }
+      promise.resolve(result)
+    } catch (error: Exception) {
+      promise.reject("TERMINAL_REPLAY_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
   fun addListener(eventName: String) = Unit
 
   @ReactMethod
@@ -264,7 +289,7 @@ class CodeForgeRuntimeModule(
         session.process.outputStream.write(byteArrayOf(value.toByte()))
         session.process.outputStream.flush()
       }
-      emitTerminalEvent(sessionId, "signal", "INT")
+      emitTerminalEvent(sessionId, 0L, "signal", "INT")
       promise.resolve(null)
     } catch (error: Exception) {
       promise.reject("TERMINAL_SIGNAL_FAILED", error.message, error)
@@ -281,17 +306,17 @@ class CodeForgeRuntimeModule(
           val total = session.outputBytes.addAndGet(count.toLong())
           if (total > MAX_OUTPUT_BYTES) {
             session.state = TerminalContract.State.FAILED
-            emitTerminalEvent(session.sessionId, "output-truncated", null)
+            emitTerminalEvent(session.sessionId, 0L, "output-truncated", null)
             session.process.destroy()
             break
           }
           val chunk = Base64.encodeToString(buffer.copyOf(count), Base64.NO_WRAP)
-          emitTerminalEvent(session.sessionId, "output", chunk)
+          emitTerminalEvent(session.sessionId, 0L, "output", chunk)
         }
       }
     } catch (error: Exception) {
       session.state = TerminalContract.State.FAILED
-      emitTerminalEvent(session.sessionId, "error", error.message ?: "Terminal output failed")
+      emitTerminalEvent(session.sessionId, 0L, "error", error.message ?: "Terminal output failed")
     }
   }
 
@@ -299,19 +324,20 @@ class CodeForgeRuntimeModule(
     try {
       val exitCode = session.process.waitFor()
       session.state = TerminalContract.State.EXITED
-      emitTerminalEvent(session.sessionId, "exit", exitCode.toString())
+      emitTerminalEvent(session.sessionId, 0L, "exit", exitCode.toString())
     } catch (error: InterruptedException) {
       Thread.currentThread().interrupt()
       session.state = TerminalContract.State.LOST
-      emitTerminalEvent(session.sessionId, "error", "Terminal wait interrupted")
+      emitTerminalEvent(session.sessionId, 0L, "error", "Terminal wait interrupted")
     } finally {
       terminalSessions.remove(session.sessionId)
     }
   }
 
-  private fun emitTerminalEvent(sessionId: String, kind: String, payload: String?) {
+  private fun emitTerminalEvent(sessionId: String, sequence: Long, kind: String, payload: String?) {
     val event = Arguments.createMap()
     event.putString("sessionId", sessionId)
+    event.putDouble("sequence", sequence.toDouble())
     event.putString("kind", kind)
     if (payload != null) event.putString("payload", payload)
     reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java).emit("CodeForgeTerminalEvent", event)

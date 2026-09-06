@@ -14,13 +14,14 @@ import android.util.Base64
 import androidx.core.app.NotificationCompat
 import java.io.File
 import java.util.UUID
+import java.util.ArrayDeque
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 /** Owns one user-visible local terminal session independently of the Activity lifecycle. */
 class TerminalService : Service() {
-  interface Listener { fun onTerminalEvent(sessionId: String, kind: String, payload: String?) }
+  interface Listener { fun onTerminalEvent(sessionId: String, sequence: Long, kind: String, payload: String?) }
   private val binder = LocalBinder()
   private val listeners = CopyOnWriteArraySet<Listener>()
   private var session: Session? = null
@@ -86,6 +87,25 @@ class TerminalService : Service() {
   }
 
   @Synchronized
+  fun resize(sessionId: String, rows: Int, columns: Int) {
+    require(TerminalContract.validateSize(rows, columns)) { "Terminal dimensions are outside the supported range" }
+    val current = requireSession(sessionId)
+    require(current.isAlive()) { "The terminal session is not running" }
+    require(current.isPty()) { "Terminal resize requires the native PTY transport" }
+    require(PtyNative.resize(current.ptyHandle, rows, columns)) { "Terminal resize failed" }
+    current.rows = rows
+    current.columns = columns
+    emit(sessionId, "resize", "$rows,$columns")
+  }
+
+  fun replay(sessionId: String, afterSequence: Long): List<Map<String, String>> = synchronized(this) {
+    session?.takeIf { it.id == sessionId }?.replay
+      ?.filter { it.sequence > afterSequence }
+      ?.map { record -> mapOf("sessionId" to sessionId, "sequence" to record.sequence.toString(), "kind" to record.kind, "payload" to (record.payload ?: "")) }
+      ?: emptyList()
+  }
+
+  @Synchronized
   fun stopSession(reason: String = "user-stopped") {
     val current = session ?: return
     if (current.isPty()) PtyNative.signal(current.ptyHandle, 15)
@@ -130,7 +150,12 @@ class TerminalService : Service() {
     finally { if (current.isPty()) PtyNative.close(current.ptyHandle); synchronized(this) { if (session?.id == current.id) session = null } }
   }
 
-  private fun emit(sessionId: String, kind: String, payload: String?) { listeners.forEach { it.onTerminalEvent(sessionId, kind, payload) } }
+  private fun emit(sessionId: String, kind: String, payload: String?) {
+    val current = session?.takeIf { it.id == sessionId }
+    val sequence = current?.nextSequence() ?: 0L
+    current?.remember(EventRecord(sequence, kind, payload))
+    listeners.forEach { it.onTerminalEvent(sessionId, sequence, kind, payload) }
+  }
   private fun createNotificationChannel() { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL_ID, "CodeForge terminal", NotificationManager.IMPORTANCE_LOW)) }
   private fun buildNotification(): Notification {
     val stop = PendingIntent.getService(this, 2, Intent(this, TerminalService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -139,11 +164,19 @@ class TerminalService : Service() {
   }
   override fun onDestroy() { stopSession("service-destroyed"); super.onDestroy() }
 
-  private data class Session(val id: String, val workspace: File, val process: Process?, val ptyHandle: Long, val outputBytes: AtomicLong = AtomicLong(0)) {
+  private class Session(val id: String, val workspace: File, val process: Process?, val ptyHandle: Long, val outputBytes: AtomicLong = AtomicLong(0)) {
+    val replay = ArrayDeque<EventRecord>()
+    var sequence = 0L
+    var rows = 24
+    var columns = 80
+    @Synchronized fun nextSequence(): Long = ++sequence
+    @Synchronized fun remember(record: EventRecord) { replay.addLast(record); while (replay.size > 256) replay.removeFirst() }
     fun isPty() = ptyHandle != 0L
     fun isAlive() = if (isPty()) true else process?.isAlive == true
-    fun metadata() = mapOf("sessionId" to id, "state" to "running", "cwd" to workspace.absolutePath, "pty" to isPty().toString(), "transport" to if (isPty()) "native-pty" else "android-process-pipes")
+    fun metadata() = mapOf("sessionId" to id, "state" to "running", "cwd" to workspace.absolutePath, "pty" to isPty().toString(), "transport" to if (isPty()) "native-pty" else "android-process-pipes", "rows" to rows.toString(), "columns" to columns.toString(), "lastSequence" to sequence.toString())
   }
+
+  private data class EventRecord(val sequence: Long, val kind: String, val payload: String?)
 
   companion object {
     const val ACTION_STOP = "com.app.codeforgemobile.action.STOP_TERMINAL"

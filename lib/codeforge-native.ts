@@ -38,9 +38,17 @@ export type TerminalStartResult = {
   transport: "native-pty" | "android-process-pipes";
 };
 
+export type TerminalReplayEvent = {
+  sessionId: string;
+  sequence: number;
+  kind: "output" | "signal" | "stopping" | "exit" | "error";
+  payload?: string;
+};
+
 export type TerminalEvent = {
   sessionId: string;
-  kind: "started" | "output" | "output-truncated" | "signal" | "stopping" | "exit" | "error";
+  sequence?: number;
+  kind: "started" | "output" | "output-truncated" | "signal" | "resize" | "stopping" | "exit" | "error";
   payload?: string;
 };
 
@@ -55,6 +63,8 @@ type CodeForgeRuntimeNativeModule = {
   interruptTerminal(sessionId: string): Promise<void>;
   terminateTerminal(sessionId: string): Promise<void>;
   getTerminalState(sessionId: string): Promise<{ sessionId: string; state: string; pty: boolean; transport: string }>;
+  resizeTerminal(sessionId: string, rows: number, columns: number): Promise<void>;
+  replayTerminal(sessionId: string, afterSequence: number): Promise<TerminalReplayEvent[]>;
 };
 
 const nativeModule = NativeModules.CodeForgeRuntime as CodeForgeRuntimeNativeModule | undefined;
@@ -96,6 +106,14 @@ export const codeForgeNative = {
   async terminateTerminal(sessionId: string): Promise<void> {
     if (!nativeModule || Platform.OS !== "android") throw new Error("The Android terminal bridge is unavailable");
     return nativeModule.terminateTerminal(sessionId);
+  },
+  async resizeTerminal(sessionId: string, rows: number, columns: number): Promise<void> {
+    if (!nativeModule || Platform.OS !== "android") throw new Error("The Android terminal bridge is unavailable");
+    return nativeModule.resizeTerminal(sessionId, rows, columns);
+  },
+  async replayTerminal(sessionId: string, afterSequence = 0): Promise<TerminalReplayEvent[]> {
+    if (!nativeModule || Platform.OS !== "android") return [];
+    return nativeModule.replayTerminal(sessionId, afterSequence);
   },
   subscribeTerminalEvents(listener: (event: TerminalEvent) => void): EmitterSubscription | null {
     if (!nativeModule || Platform.OS !== "android") return null;
