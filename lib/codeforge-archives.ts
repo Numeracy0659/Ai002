@@ -26,6 +26,24 @@ export class ProjectArchiveError extends Error {
   }
 }
 
+export function validateProjectSnapshot(snapshot: ProjectSnapshot): void {
+  if (!/^[a-zA-Z0-9-]{8,80}$/.test(snapshot.manifest.projectId)) throw new ProjectArchiveError("Invalid project ID");
+  if (!snapshot.manifest.name.trim()) throw new ProjectArchiveError("Project name is required");
+  if (snapshot.files.length > MAX_ARCHIVE_ENTRIES) throw new ProjectArchiveError("Project contains too many files");
+  const paths = new Set<string>();
+  let totalBytes = 0;
+  for (const file of snapshot.files) {
+    const path = normalizeProjectPath(file.path);
+    if (paths.has(path)) throw new ProjectArchiveError(`Project contains a duplicate path: ${path}`);
+    const size = new TextEncoder().encode(file.content).length;
+    if (size > MAX_FILE_BYTES) throw new ProjectArchiveError(`File is too large: ${path}`);
+    if (file.size !== size) throw new ProjectArchiveError(`File size metadata is incorrect: ${path}`);
+    totalBytes += size;
+    if (totalBytes > MAX_TOTAL_BYTES) throw new ProjectArchiveError("Project exceeds the size limit");
+    paths.add(path);
+  }
+}
+
 export function normalizeProjectPath(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   if (!normalized || normalized.startsWith("/") || normalized.includes("\0")) throw new ProjectArchiveError("Archive contains an absolute or invalid path");
@@ -89,4 +107,3 @@ export function decodeProjectArchive(bytes: Uint8Array): ProjectSnapshot {
   files.sort((left, right) => left.path.localeCompare(right.path));
   return { manifest, files };
 }
-

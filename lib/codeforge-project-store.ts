@@ -1,5 +1,5 @@
 import * as FileSystem from "expo-file-system/legacy";
-import { decodeProjectArchive, encodeProjectArchive, normalizeProjectPath, type ProjectFile, type ProjectManifest, type ProjectSnapshot } from "./codeforge-archives";
+import { decodeProjectArchive, encodeProjectArchive, normalizeProjectPath, validateProjectSnapshot, type ProjectFile, type ProjectManifest, type ProjectSnapshot } from "./codeforge-archives";
 
 export * from "./codeforge-archives";
 
@@ -30,19 +30,37 @@ async function ensureDirectory(uri: string): Promise<void> {
 
 async function writeAtomic(uri: string, content: string): Promise<void> {
   const temporary = `${uri}.tmp-${Date.now()}`;
+  const recovery = `${uri}.codeforge-recovery`;
   await FileSystem.writeAsStringAsync(temporary, content, { encoding: FileSystem.EncodingType.UTF8 });
   const existing = await FileSystem.getInfoAsync(uri);
-  if (existing.exists) await FileSystem.deleteAsync(uri, { idempotent: true });
+  if (existing.exists) {
+    await FileSystem.deleteAsync(recovery, { idempotent: true });
+    await FileSystem.moveAsync({ from: uri, to: recovery });
+  }
   await FileSystem.moveAsync({ from: temporary, to: uri });
+  await FileSystem.deleteAsync(recovery, { idempotent: true });
+}
+
+async function recoverAtomicFile(uri: string): Promise<void> {
+  const target = await FileSystem.getInfoAsync(uri);
+  if (target.exists) return;
+  const recovery = `${uri}.codeforge-recovery`;
+  const backup = await FileSystem.getInfoAsync(recovery);
+  if (backup.exists) await FileSystem.moveAsync({ from: recovery, to: uri });
 }
 
 export async function saveProjectSnapshot(snapshot: ProjectSnapshot): Promise<void> {
+  validateProjectSnapshot(snapshot);
   const root = projectRoot(snapshot.manifest.projectId);
   const tree = `${root}tree/`;
   await ensureDirectory(tree);
   await ensureDirectory(`${root}.codeforge/`);
   await ensureDirectory(`${root}.codeforge/recovery/`);
+  await recoverAtomicFile(`${root}.codeforge/project.json`);
   await writeAtomic(`${root}.codeforge/project.json`, JSON.stringify(snapshot.manifest, null, 2));
+  await writeAtomic(`${root}.codeforge/lock.json`, JSON.stringify({ schemaVersion: 1, updatedAt: snapshot.manifest.updatedAt, files: snapshot.manifest.files }, null, 2));
+  const trustInfo = await FileSystem.getInfoAsync(`${root}.codeforge/trust.json`);
+  if (!trustInfo.exists) await writeAtomic(`${root}.codeforge/trust.json`, JSON.stringify({ schemaVersion: 1, state: "unknown", capabilities: [] }, null, 2));
   for (const file of snapshot.files) {
     const path = normalizeProjectPath(file.path);
     const uri = `${tree}${path}`;
@@ -70,6 +88,7 @@ async function readProjectFiles(root: string, relative = ""): Promise<ProjectFil
 
 export async function loadProjectSnapshot(projectId: string): Promise<ProjectSnapshot> {
   const root = projectRoot(projectId);
+  await recoverAtomicFile(`${root}.codeforge/project.json`);
   const manifest = JSON.parse(await FileSystem.readAsStringAsync(`${root}.codeforge/project.json`, { encoding: FileSystem.EncodingType.UTF8 })) as ProjectManifest;
   const files = await readProjectFiles(`${root}tree/`);
   return { manifest, files };

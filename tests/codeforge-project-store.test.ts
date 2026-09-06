@@ -5,6 +5,7 @@ import {
   encodeProjectArchive,
   ProjectArchiveError,
   validateArchiveEntries,
+  validateProjectSnapshot,
 } from "../lib/codeforge-archives";
 
 const snapshot = {
@@ -41,5 +42,11 @@ describe("CodeForge project archives", () => {
   it("rejects archives without CodeForge metadata", () => {
     const archive = new Uint8Array([80, 75, 5, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     expect(() => decodeProjectArchive(archive)).toThrow("project.json");
+  });
+
+  it("rejects invalid project snapshots before writing", () => {
+    expect(() => validateProjectSnapshot({ ...snapshot, files: [{ path: "../secret", content: "x", size: 1 }] })).toThrow("unsafe path");
+    expect(() => validateProjectSnapshot({ ...snapshot, files: [{ path: "src/main.ts", content: "x", size: 99 }] })).toThrow("size metadata");
+    expect(() => validateProjectSnapshot({ ...snapshot, files: [snapshot.files[0], { ...snapshot.files[0] }] })).toThrow("duplicate");
   });
 });

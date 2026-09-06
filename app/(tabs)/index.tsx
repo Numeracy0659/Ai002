@@ -108,6 +108,20 @@ export default function HomeScreen() {
           setActiveFile(result.snapshot.activeFile);
           setContents(result.snapshot.contents);
           workspaceRevisionRef.current = result.revision;
+          const canonicalSnapshot = snapshotFromFiles(
+            "mobile-lab",
+            Object.entries(result.snapshot.contents).map(([path, content]) => ({
+              path,
+              content,
+              size: new TextEncoder().encode(content).length,
+            })),
+            projectIdRef.current,
+          );
+          void saveProjectSnapshot(canonicalSnapshot).then(() => {
+            if (legacy) void AsyncStorage.removeItem(LEGACY_WORKSPACE_STORAGE_KEY);
+          }).catch(() => {
+            setLastRun("Workspace loaded, but canonical project migration is pending");
+          });
           if (result.recovered) setLastRun("Recovered the last complete workspace save");
         } else {
           setLastRun("Started a fresh workspace");

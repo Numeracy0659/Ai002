@@ -329,7 +329,7 @@ The initial package service should use:
 
 ## 11. Implementation roadmap — current terminal slice to professional release
 
-This is the authoritative hand-off plan. Implement phases in order, preserve the non-claims in this README, and never mark a phase complete from a desktop-only or mocked result. The repository has completed the filesystem/editor foundations, runtime/trust contracts, release preparation, and a first Android shell process-pipes slice. The next production-critical item is the NDK PTY terminal.
+This is the authoritative hand-off plan. Implement phases in order, preserve the non-claims in this README, and never mark a phase complete from a desktop-only or mocked result. The repository has completed parts of the filesystem/editor foundations, runtime/trust contracts, release preparation, and a first Android shell process-pipes/NDK preparation slice. The next production-critical item is the verified real-terminal vertical slice: save a real project, launch the fixed shell, collect measured output and exit status on a physical device in airplane mode, and only then widen terminal behavior.
 
 ### Phase 5 — Complete the Android terminal
 

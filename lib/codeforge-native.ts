@@ -35,12 +35,12 @@ export type TerminalStartResult = {
   state: "running";
   cwd: string;
   pty: boolean;
-  transport: "android-process-pipes";
+  transport: "native-pty" | "android-process-pipes";
 };
 
 export type TerminalEvent = {
   sessionId: string;
-  kind: "started" | "output" | "output-truncated" | "signal" | "exit" | "error";
+  kind: "started" | "output" | "output-truncated" | "signal" | "stopping" | "exit" | "error";
   payload?: string;
 };
 
