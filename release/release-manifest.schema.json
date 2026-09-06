@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CodeForge Release Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["appId", "versionCode", "versionName", "commit", "artifact", "signing", "toolchain", "limitations"],
+  "properties": {
+    "appId": {"type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_.]+$"},
+    "versionCode": {"type": "integer", "minimum": 1},
+    "versionName": {"type": "string", "minLength": 1},
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{7,64}$"},
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "sha256"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sbom": {"type": "string"},
+        "provenance": {"type": "string"}
+      }
+    },
+    "signing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["certificateSha256"],
+      "properties": {
+        "certificateSha256": {"type": "string", "pattern": "^([0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}$"},
+        "lineage": {"type": "string"}
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gradleWrapper", "java", "androidGradlePlugin"],
+      "properties": {
+        "gradleWrapper": {"type": "string"},
+        "java": {"type": "string"},
+        "androidGradlePlugin": {"type": "string"},
+        "androidSdk": {"type": "string"}
+      }
+    },
+    "limitations": {"type": "array", "items": {"type": "string"}}
+  }
+}
