@@ -14,9 +14,9 @@ Android foreground services can improve continuity for a user-visible terminal s
 
 ## Current implementation
 
-The native `CodeForgeRuntime` module provides a bounded local shell vertical slice. It creates a unique directory under the app’s private files directory, launches `/system/bin/sh` with `ProcessBuilder`, clears the inherited environment, sets a minimal `HOME`, `PATH`, `TERM`, and `LANG`, merges output into one bounded stream, emits base64-encoded output events, accepts bounded UTF-8 input, sends Ctrl-C as byte `0x03`, and supports graceful termination with forced termination fallback.
+The native `CodeForgeRuntime` module now connects to a private `TerminalService` through a local Binder. The service is user-started, calls `startForeground()` promptly, owns one bounded local shell session, creates a unique directory under the app’s private files directory, launches `/system/bin/sh` with `ProcessBuilder`, clears the inherited environment, sets a minimal `HOME`, `PATH`, `TERM`, and `LANG`, merges output into one bounded stream, emits base64-encoded output events, accepts bounded UTF-8 input, sends Ctrl-C as byte `0x03`, and supports graceful termination with forced termination fallback. The service is `START_NOT_STICKY`, non-exported, and exposes only app-internal Binder methods.
 
-The React Native screen provides transcript display, command input, Send, Ctrl-C, Stop, output truncation, exit/error states, and a visible “App UID sandbox · no root” disclosure. The terminal session is not treated as a source-code runtime: the editor’s Run action opens the app-owned shell and does not claim that Python or JavaScript execution is installed.
+The React Native screen provides transcript display, command input, Send, Ctrl-C, Stop, output truncation, exit/error states, and a visible “App UID sandbox · no root” disclosure. The terminal session is not treated as a source-code runtime: the editor’s Run action opens the app-owned shell and does not claim that Python or JavaScript execution is installed. Activity rotation/unbinding is separated from service ownership; service/process death is reported as session loss.
 
 ## Next device-gated step
 
