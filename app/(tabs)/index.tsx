@@ -29,6 +29,7 @@ import { analyzeSource, getWorkingTreeState } from "@/lib/codeforge-analysis";
 import { createWorkspaceSnapshot, WorkspaceStore } from "@/lib/codeforge-store";
 import { exportProjectArchive, importProjectArchive, makeProjectId, saveProjectSnapshot, snapshotFromFiles } from "@/lib/codeforge-project-store";
 import { EditorSessionManager, type Selection } from "@/lib/codeforge-editor";
+import { codeForgeNative, type NativeHostState } from "@/lib/codeforge-native";
 import { CodeForgeEditorSurface } from "@/components/codeforge-editor-surface";
 
 type Mode = "editor" | "files" | "output" | "settings";
@@ -58,6 +59,19 @@ export default function HomeScreen() {
   const [fileQuery, setFileQuery] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [selection, setSelection] = useState<Selection>({ anchor: 0, head: 0 });
+  const [nativeHost, setNativeHost] = useState<NativeHostState | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    codeForgeNative.getHostState().then((state) => {
+      if (isMounted) setNativeHost(state);
+    }).catch(() => {
+      if (isMounted) setNativeHost(null);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -511,8 +525,12 @@ export default function HomeScreen() {
                   <Pressable onPress={() => setWordWrap((value) => !value)} style={[styles.switch, wordWrap && styles.switchOn]}><View style={[styles.switchKnob, wordWrap && styles.switchKnobOn]} /></Pressable>
                 </View>
                 <View style={styles.settingRow}>
-                  <View><Text style={styles.settingTitle}>Runtime profiles</Text><Text style={styles.settingDetail}>Python · JavaScript · HTML/CSS</Text></View>
+                  <View><Text style={styles.settingTitle}>Runtime providers</Text><Text style={styles.settingDetail}>{nativeHost ? `${nativeHost.abi} · API ${nativeHost.apiLevel} · native bridge ready` : "Native runtime bridge pending"}</Text></View>
                   <Text style={styles.settingChevron}>›</Text>
+                </View>
+                <View style={styles.settingRow}>
+                  <View><Text style={styles.settingTitle}>Execution policy</Text><Text style={styles.settingDetail}>{nativeHost?.nativeEnforcementAvailable ? "Fail-closed capability checks available" : "No native enforcement evidence"}</Text></View>
+                  <View style={[styles.policyBadge, nativeHost?.nativeEnforcementAvailable && styles.policyBadgeReady]}><Text style={styles.policyBadgeText}>{nativeHost?.nativeEnforcementAvailable ? "READY" : "PENDING"}</Text></View>
                 </View>
               </View>
               <Pressable onPress={() => Alert.alert("CodeForge", "Your local workspace is ready for development.")} style={({ pressed }) => [styles.aboutCard, pressed && styles.pressed]}>
@@ -702,6 +720,9 @@ const styles = StyleSheet.create({
   switchKnob: { backgroundColor: "#A9ADBA", borderRadius: 10, height: 20, width: 20 },
   switchKnobOn: { alignSelf: "flex-end", backgroundColor: "#FFFFFF" },
   settingChevron: { color: "#74798A", fontSize: 25, fontWeight: "300" },
+  policyBadge: { backgroundColor: "#342B1A", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5 },
+  policyBadgeReady: { backgroundColor: "#173A31" },
+  policyBadgeText: { color: "#F5B84B", fontSize: 9, fontWeight: "800", letterSpacing: 0.6 },
   aboutCard: { alignItems: "center", backgroundColor: "#191A22", borderColor: "#2B2D39", borderRadius: 12, borderWidth: 1, flexDirection: "row", marginTop: 14, padding: 14 },
   aboutIcon: { alignItems: "center", backgroundColor: "#30265A", borderRadius: 9, height: 35, justifyContent: "center", width: 35 },
   aboutIconText: { color: "#C4B5FD", fontSize: 17, fontWeight: "800" },

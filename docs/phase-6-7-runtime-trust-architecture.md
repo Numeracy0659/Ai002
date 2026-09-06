@@ -10,6 +10,8 @@ The attached product plan is authoritative for this milestone. It defines **Phas
 
 The TypeScript layer implemented in this milestone is deliberately a **domain contract and policy layer**. It validates provider manifests, runtime artifacts, JobSpecs, capability requests, resource profiles, trust records, grants, migrations, redacted exports, and audit events. It provides a mock adapter for orchestration tests. It does not claim to execute JavaScript, Python, or Wasm, and it cannot enforce Android permissions, Keystore, JNI, memory quotas, process isolation, or native cancellation.
 
+The checked-in Android project now also contains a real Kotlin bridge named `CodeForgeRuntime`. It reports the installed package signer/API/ABI, computes SHA-256 for supplied artifact bytes, persists project trust in app-private preferences, and evaluates a deliberately small safe capability set. It is a host-policy foundation, not yet a QuickJS/CPython/WAMR executor or hostile-code sandbox. Runtime execution remains denied until a provider artifact is natively packaged, verified, and connected to a process/runtime adapter.
+
 ## Phase 6 architecture
 
 A runtime provider is selected only by an exact provider/version/API/ABI/artifact tuple. Each provider declares its lifecycle status (`mock`, `native-pending`, `verified`, or `deprecated`), capability vocabulary, execution modes, resource profiles, artifact digest/provenance, and trust class. The job contract is serialized and versioned; it does not expose QuickJS values, WAMR pointers, JNI objects, or shell strings.
@@ -24,7 +26,7 @@ Audit events are append-only, hash-chained, transactional, bounded, and redacted
 
 ## Native gates still required
 
-A production gate must later verify WAMR/QuickJS/CPython per ABI, Android signer and Keystore evidence, native capability enforcement, actual WASI preopens/imports, QuickJS interrupt behavior, CPython JNI/extraction, memory/RSS/startup/battery measurements, cancellation of blocking work, and emulator/physical-device compatibility. Until those gates pass, UI and release metadata must label runtime results as mock or native-pending rather than successful execution.
+A production gate must later verify WAMR/QuickJS/CPython per ABI, Android signer and Keystore evidence, native capability enforcement, actual WASI preopens/imports, QuickJS interrupt behavior, CPython JNI/extraction, memory/RSS/startup/battery measurements, cancellation of blocking work, and emulator/physical-device compatibility. Until those gates pass, UI and release metadata must label runtime results as mock or native-pending rather than successful execution. The current sandbox cannot complete the final APK build because it has no Android SDK (`ANDROID_HOME`/`ANDROID_SDK_ROOT`); CI or a device-equipped build host must run `android/gradlew assembleDebug` and the physical-device gate.
 
 ## Sources
 
