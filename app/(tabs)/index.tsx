@@ -27,6 +27,7 @@ import {
 } from "@/lib/codeforge-workspace";
 import { analyzeSource, getWorkingTreeState } from "@/lib/codeforge-analysis";
 import { createWorkspaceSnapshot, WorkspaceStore } from "@/lib/codeforge-store";
+import { exportProjectArchive, importProjectArchive, makeProjectId, saveProjectSnapshot, snapshotFromFiles } from "@/lib/codeforge-project-store";
 
 type Mode = "editor" | "files" | "output" | "settings";
 const LEGACY_WORKSPACE_STORAGE_KEY = "codeforge.workspace.v1";
@@ -50,6 +51,7 @@ export default function HomeScreen() {
   const [wordWrap, setWordWrap] = useState(true);
   const [isHydrated, setIsHydrated] = useState(false);
   const workspaceRevisionRef = useRef(0);
+  const projectIdRef = useRef(makeProjectId(1_757_000_000_000));
   const [fileQuery, setFileQuery] = useState("");
 
   useEffect(() => {
@@ -121,53 +123,65 @@ export default function HomeScreen() {
     setLastRun(`Loaded ${file.name}`);
   };
 
-  const saveFile = () => {
+  const saveFile = async () => {
     runHaptic(Haptics.ImpactFeedbackStyle.Medium);
-    setIsDirty(false);
-    setLastRun(`${currentFile.name} saved locally`);
+    try {
+      const snapshot = snapshotFromFiles("mobile-lab", Object.entries(contents).map(([path, content]) => ({
+        path,
+        content,
+        size: new TextEncoder().encode(content).length,
+      })), projectIdRef.current);
+      await saveProjectSnapshot(snapshot);
+      setIsDirty(false);
+      setLastRun(`${currentFile.name} saved to the app-private project store`);
+    } catch {
+      setLastRun("Could not save the project to app-private storage");
+      Alert.alert("Save failed", "CodeForge could not complete the project save. Your current editor content remains open.");
+    }
   };
 
-  const importFile = async () => {
+  const importProject = async () => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({ type: "text/*", copyToCacheDirectory: true });
+      const result = await DocumentPicker.getDocumentAsync({ type: ["application/zip", "application/x-zip-compressed"], copyToCacheDirectory: true });
       if (result.canceled) return;
       const asset = result.assets[0];
-      const importedName = asset.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const importedContent = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.UTF8 });
-      const isPython = importedName.endsWith(".py");
-      const isHtml = importedName.endsWith(".html");
-      const isCss = importedName.endsWith(".css");
-      const importedFile: FileItem = {
-        id: importedName,
-        name: importedName,
-        language: isPython ? "Python" : isHtml ? "HTML" : isCss ? "CSS" : "JavaScript",
-        icon: isPython ? "PY" : isHtml ? "<>" : isCss ? "#" : "JS",
-        color: isPython ? "#FFD166" : isHtml ? "#FF6B35" : isCss ? "#61DAFB" : "#F7DF1E",
-      };
-      setFiles((previous) => previous.some((file) => file.id === importedFile.id) ? previous : [...previous, importedFile]);
-      setContents((previous) => ({ ...previous, [importedFile.id]: importedContent }));
-      setActiveFile(importedFile.id);
-      setMode("editor");
-      setLastRun(`Imported ${importedFile.name}`);
+      const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
+      const imported = await importProjectArchive(base64ToBytes(base64));
+      const importedFiles = imported.files.map(({ path }) => makeFileItem(path));
+      setFiles(importedFiles);
+      setContents(Object.fromEntries(imported.files.map(({ path, content }) => [path, content])));
+      setActiveFile(importedFiles[0]?.id ?? "");
+      projectIdRef.current = imported.manifest.projectId;
+      setMode("files");
+      setLastRun(`Imported project ${imported.manifest.name} with ${imported.files.length} files`);
       runHaptic(Haptics.ImpactFeedbackStyle.Medium);
-    } catch {
-      Alert.alert("Import failed", "CodeForge could not read that file as UTF-8 source text.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The archive could not be imported.";
+      Alert.alert("Project import failed", message);
     }
   };
 
   const exportFile = async () => {
     try {
-      if (!FileSystem.documentDirectory) throw new Error("No document directory");
-      const exportUri = `${FileSystem.documentDirectory}${currentFile.name}`;
-      await FileSystem.writeAsStringAsync(exportUri, currentContent, { encoding: FileSystem.EncodingType.UTF8 });
+      const snapshot = snapshotFromFiles("mobile-lab", Object.entries(contents).map(([path, content]) => ({
+        path,
+        content,
+        size: new TextEncoder().encode(content).length,
+      })), projectIdRef.current);
+      await saveProjectSnapshot(snapshot);
+      const archive = await exportProjectArchive(projectIdRef.current);
+      if (!FileSystem.cacheDirectory) throw new Error("Cache storage is unavailable");
+      const exportUri = `${FileSystem.cacheDirectory}codeforge-mobile-lab.zip`;
+      await FileSystem.writeAsStringAsync(exportUri, bytesToBase64(archive), { encoding: FileSystem.EncodingType.Base64 });
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(exportUri, { mimeType: "text/plain", dialogTitle: `Share ${currentFile.name}` });
-        setLastRun(`Shared ${currentFile.name}`);
+        await Sharing.shareAsync(exportUri, { mimeType: "application/zip", dialogTitle: "Export CodeForge project" });
+        setLastRun("Exported a validated project snapshot");
       } else {
-        Alert.alert("Export ready", `${currentFile.name} was saved inside the CodeForge sandbox.`);
+        Alert.alert("Export ready", "The project ZIP was created in the app cache, but sharing is unavailable on this device.");
       }
-    } catch {
-      Alert.alert("Export failed", "CodeForge could not prepare this file for sharing.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "CodeForge could not prepare the project archive.";
+      Alert.alert("Project export failed", message);
     }
   };
 
@@ -353,8 +367,11 @@ export default function HomeScreen() {
                   <Text style={styles.panelTitle}>Your workspace</Text>
                 </View>
                 <View style={styles.headerActions}>
-                  <Pressable onPress={importFile} style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}>
-                    <Text style={styles.addButtonText}>↑ Import</Text>
+                  <Pressable onPress={importProject} style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}>
+                    <Text style={styles.addButtonText}>↑ Import project</Text>
+                  </Pressable>
+                  <Pressable onPress={exportFile} style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}>
+                    <Text style={styles.addButtonText}>↓ Export</Text>
                   </Pressable>
                   <Pressable onPress={createFile} style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}>
                     <Text style={styles.addButtonText}>＋ New</Text>
@@ -447,6 +464,31 @@ export default function HomeScreen() {
       </KeyboardAvoidingView>
     </ScreenContainer>
   );
+}
+
+function makeFileItem(name: string): FileItem {
+  const lower = name.toLowerCase();
+  const isPython = lower.endsWith(".py");
+  const isHtml = lower.endsWith(".html") || lower.endsWith(".htm");
+  const isCss = lower.endsWith(".css");
+  return {
+    id: name,
+    name,
+    language: isPython ? "Python" : isHtml ? "HTML" : isCss ? "CSS" : "JavaScript",
+    icon: isPython ? "PY" : isHtml ? "<>" : isCss ? "#" : "JS",
+    color: isPython ? "#FFD166" : isHtml ? "#FF6B35" : isCss ? "#61DAFB" : "#F7DF1E",
+  };
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  return btoa(binary);
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
 function NavButton({ label, icon, active, onPress }: { label: string; icon: string; active: boolean; onPress: () => void }) {
