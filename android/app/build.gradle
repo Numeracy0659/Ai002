@@ -8,7 +8,8 @@ def releaseStorePassword = findProperty('CODEFORGE_RELEASE_STORE_PASSWORD') ?: S
 def releaseKeyAlias = findProperty('CODEFORGE_RELEASE_KEY_ALIAS') ?: System.getenv('CODEFORGE_RELEASE_KEY_ALIAS')
 def releaseKeyPassword = findProperty('CODEFORGE_RELEASE_KEY_PASSWORD') ?: System.getenv('CODEFORGE_RELEASE_KEY_PASSWORD')
 def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null && it.toString().trim() }
-if (gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') } && !hasReleaseSigning) {
+def verificationBuild = (findProperty('codeforgeVerification') ?: 'false').toBoolean()
+if (gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') } && !hasReleaseSigning && !verificationBuild) {
     throw new GradleException('Release signing is not configured. Provide CODEFORGE_RELEASE_STORE_FILE, CODEFORGE_RELEASE_STORE_PASSWORD, CODEFORGE_RELEASE_KEY_ALIAS, and CODEFORGE_RELEASE_KEY_PASSWORD through a protected secret store.')
 }
 
@@ -124,6 +125,8 @@ android {
                 storePassword releaseStorePassword
                 keyAlias releaseKeyAlias
                 keyPassword releaseKeyPassword
+            } else if (verificationBuild) {
+                initWith signingConfigs.debug
             }
         }
     }

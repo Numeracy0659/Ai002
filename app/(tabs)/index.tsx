@@ -517,9 +517,9 @@ export default function HomeScreen() {
                   <Text style={styles.secondaryButtonIcon}>↗</Text>
                   <Text style={styles.secondaryButtonText}>Share</Text>
                 </Pressable>
-                <Pressable onPress={runFile} style={({ pressed }) => [styles.runButton, pressed && styles.buttonPressed]}>
+                <Pressable onPress={runFile} style={({ pressed }) => [styles.runButton, !codeForgeNative.available && styles.disabledButton, pressed && styles.buttonPressed]} accessibilityState={{ disabled: !codeForgeNative.available }}>
                   <Text style={styles.runButtonIcon}>{isRunning ? "◌" : "▶"}</Text>
-                  <Text style={styles.runButtonText}>{isRunning ? "Running" : "Run unavailable"}</Text>
+                  <Text style={styles.runButtonText}>{isRunning ? "Running" : codeForgeNative.available ? "Run" : "Bridge pending"}</Text>
                 </Pressable>
               </View>
             </View>

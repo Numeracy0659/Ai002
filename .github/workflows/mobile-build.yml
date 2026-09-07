@@ -68,24 +68,24 @@ jobs:
           grep -q 'add(CodeForgeRuntimePackage())' android/app/src/main/java/com/app/codeforgemobile/MainApplication.kt
           test -f android/app/src/main/cpp/CMakeLists.txt
           test -f android/app/src/main/cpp/pty_bridge.cpp
-      - name: Build standalone debug APK for device verification
+      - name: Build standalone verification APK for device testing
         working-directory: android
-        run: ./gradlew assembleDebug -PreactNativeArchitectures=${{ matrix.abi }} --no-daemon --stacktrace
+        run: ./gradlew assembleRelease -PcodeforgeVerification=true -PreactNativeArchitectures=${{ matrix.abi }} --no-daemon --stacktrace
       - name: Verify JavaScript bundle and selected ABI are packaged
         run: |
-          test -n "$(unzip -Z1 android/app/build/outputs/apk/debug/app-debug.apk | grep -E '(^|/)classes[0-9]*\.dex$' | head -1)"
-          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -q 'lib/${{ matrix.abi }}/'
-          unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -q "lib/${{ matrix.abi }}/libcodeforge_pty.so"
+          test -n "$(unzip -Z1 android/app/build/outputs/apk/release/app-release.apk | grep -E '(^|/)classes[0-9]*\.dex$' | head -1)"
+          unzip -l android/app/build/outputs/apk/release/app-release.apk | grep -q 'lib/${{ matrix.abi }}/'
+          unzip -l android/app/build/outputs/apk/release/app-release.apk | grep -q "lib/${{ matrix.abi }}/libcodeforge_pty.so"
           for abi in armeabi-v7a arm64-v8a x86 x86_64; do
             if [ "$abi" != "${{ matrix.abi }}" ]; then
-              ! unzip -Z1 android/app/build/outputs/apk/debug/app-debug.apk | grep -q "^lib/$abi/"
+              ! unzip -Z1 android/app/build/outputs/apk/release/app-release.apk | grep -q "^lib/$abi/"
             fi
           done
       - name: Upload Android verification APK
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: codeforge-android-verification-${{ matrix.abi }}-${{ github.sha }}
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
 
