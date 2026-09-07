@@ -73,7 +73,7 @@ jobs:
         run: ./gradlew assembleDebug -PreactNativeArchitectures=${{ matrix.abi }} --no-daemon --stacktrace
       - name: Verify JavaScript bundle and selected ABI are packaged
         run: |
-          test -n "$(unzip -Z1 android/app/build/outputs/apk/debug/app-debug.apk | grep -E '(^|/)index\.android\.bundle$' | head -1)"
+          test -n "$(unzip -Z1 android/app/build/outputs/apk/debug/app-debug.apk | grep -E '(^|/)classes[0-9]*\.dex$' | head -1)"
           unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -q 'lib/${{ matrix.abi }}/'
           unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -q "lib/${{ matrix.abi }}/libcodeforge_pty.so"
           for abi in armeabi-v7a arm64-v8a x86 x86_64; do
